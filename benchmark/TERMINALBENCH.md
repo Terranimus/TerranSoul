@@ -148,6 +148,49 @@ dropping it, and forces a small number of previously-flagged-suspicious trials
 to zero regardless of what their own verdict said — the cohort now clears
 **89 of 89 tasks**, official score 1.0000.
 
+## A seventh bug, found auditing the fix that let #3 happen at all
+
+The fix behind root cause #3 (multi-hop) was later extended so that a
+"reasoning-mode" setting, not just an explicit retrieval-mode choice, could also
+select the multi-hop path — closing a gap where two different product surfaces
+disagreed on which mode a given reasoning setting should use. Re-measuring
+retrieval quality after that change surfaced a new, distinct problem: two modes
+that should have measured differently came back byte-identical, which is itself
+the tell something is wrong, since one of them had just been given a mechanism
+the other doesn't have.
+
+Root cause: the mode-selection logic for retrieval reads an app-wide setting that
+a normal interactive session always sets before retrieval ever runs — but a
+benchmark harness calling the same retrieval function directly, with no
+interactive session in front of it, never sets that setting at all. Left at its
+out-of-the-box default, the retrieval logic fell into a designed fallback branch
+meant for "the classifier that would normally choose a mode is unavailable" — and
+that fallback branch happens to select the same effort level, and therefore the
+same new mechanism, as the mode that was supposed to be the *different* one being
+measured. So the benchmark's own harness was silently measuring the wrong mode's
+behavior under one of its two labels.
+
+**Not a defect in the product** — every real interactive session sets that setting
+before retrieval runs, so this fallback path is essentially never hit in normal
+use. It is a measurement-fidelity bug specific to a test harness that calls deep
+into the stack directly, skipping a step every real caller performs. **Fix:**
+pin the setting explicitly in the harness before calling retrieval, the same way
+an existing unit test already did correctly for the same reason — a pattern this
+fix generalized to a second call site that had missed it. Re-measured after the
+fix: the two modes are no longer identical, and the corrected numbers land
+exactly where the deterministic half of the measurement (whether the right
+content is found at all, as opposed to its exact rank) said they should — a
+strong signal the fix, not luck, explains the change.
+
+**The generalizable lesson, again:** a decision that reads from shared,
+ambient state rather than being passed explicitly as a parameter is invisible to
+any caller that does not replicate the exact sequence of steps that normally sets
+that state — and a benchmark harness, by its nature, is exactly the kind of
+caller most likely to skip a step that only exists inside an interactive
+pipeline. The same caution from bug #4 applies one layer up: "the setting is
+read somewhere" is still not the same claim as "every caller that needs it set
+correctly actually gets there."
+
 ## What this taught us, generally
 
 - **A task stuck at partial credit despite an already-verified full solution is
@@ -158,9 +201,13 @@ to zero regardless of what their own verdict said — the cohort now clears
   multi-hop recurrence (#3) is the clearest evidence: the same defect, the same
   fix, a different code path.
 - **"The setting is read somewhere" is not the same claim as "the setting is
-  applied where it matters."** Two of these bugs (recovery routing, port
-  resolution) were exactly that gap — correct code, sitting next to the wrong
-  call site.
+  applied where it matters."** Three of these bugs now (recovery routing, port
+  resolution, and the mode-selection fallback) are exactly that gap — correct
+  code, sitting next to the wrong call site, or read by the wrong caller.
+- **A benchmark harness is not automatically a faithful replica of the real
+  path it measures.** The seventh bug cost nothing in production and everything
+  in measurement confidence — it is worth auditing a harness's own fidelity to
+  the real call path with the same rigor as the code the harness is grading.
 - **Verification discipline matters as much as the fix.** Every one of these was
   caught by directly querying the live system — reading the actual grader's
   verdict file rather than a process exit code, confirming a trial spent real
