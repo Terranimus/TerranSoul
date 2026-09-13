@@ -1,0 +1,27 @@
+{
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "terransoul stop-hook",
+            "timeout": 240
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Bash|WebFetch",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "terransoul pre-tool-hook",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}

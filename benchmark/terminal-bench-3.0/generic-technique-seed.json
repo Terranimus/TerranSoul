@@ -1,0 +1,51 @@
+{
+  "_note": [
+    "GENERIC TRANSFERABLE TECHNIQUE ONLY. rules/bench-agi-purity.md permits this and",
+    "forbids the other kind: 'generic transferable technique may persist; task-specific",
+    "knowledge may not.' Every entry below must be true of a task NOBODY HAS WRITTEN YET.",
+    "",
+    "THE TEST each entry has to pass: would it read identically for a benchmark about a",
+    "different subject? If it would have to change, it is a seed for a task and does not",
+    "belong here.",
+    "",
+    "PROVENANCE, because this is author-written rather than agent-learned and that",
+    "distinction has to survive into any report: entries 1-4 come from the published",
+    "failure taxonomy for long-horizon terminal agents (loop behaviours 39% of failures,",
+    "turn exhaustion 26%, context overflow causing re-proposal of already-failed",
+    "attempts, weak self-verification). Entries 5-7 are measured on this repo's own runs",
+    "and are cited by the observation, not by the task. Nothing here names a task, a",
+    "file, a command specific to one problem, or an answer.",
+    "",
+    "This is a DISCLOSED prior, not a discovery. Any run using it must say so."
+  ],
+  "lessons": [
+    {
+      "category": "agent-workflow",
+      "content": "SYMPTOM: you propose a fix, run it, it fails, and some turns later you propose something you already tried. This is the single largest failure mode for long-horizon terminal agents - loop behaviours are ~39% of failures, and turn exhaustion another ~26%. CAUSE: it is not forgetfulness of reasoning, it is context. Accumulated command output pushes your earlier attempt out of the window, so the failed approach stops being visible while its appeal remains. OPENING MOVE on any task you expect to take many turns: keep a running list of what you have RULED OUT and why, in a file in the workspace, and re-read it before proposing anything. A one-line append after each refuted hypothesis costs nothing; rediscovering the same dead end costs the run. CHEAPEST CHECK that this applies to you: before running a command, ask whether you can predict its output. If you can, you have run it before or it teaches nothing - either way, do not spend the turn."
+    },
+    {
+      "category": "agent-workflow",
+      "content": "SYMPTOM: your analysis is correct, you say so, and the task still scores zero. CAUSE: you are graded by something you cannot see, executing checks you were never shown, and a conclusion stated in prose is invisible to it. If the task statement names an output path, a file to modify, or a format, that artifact IS the deliverable and the reasoning is only the means. OPENING MOVE: before your final turn, list every path the task text mentions and check each one exists and holds what was asked for. CHEAPEST CHECK: `ls -la <path> && cat <path>` on the named artifact. A correct answer that was never written down is indistinguishable, to a grader, from no answer at all."
+    },
+    {
+      "category": "agent-workflow",
+      "content": "SYMPTOM: a command 'fails' and you start debugging the command. CAUSE: the search-and-test idiom exits non-zero when the answer is simply 'no'. grep with no match exits 1, test and diff -q the same. That is a SUCCESSFUL query whose result is negative, not a broken command. RULE: a command that genuinely broke writes to stderr; one that exits non-zero in silence has answered you. Read the exit status together with stderr before concluding anything failed. Time lost to this is time not spent on the actual problem, and it also poisons any automatic analysis of your run, which will count your successful searches as errors."
+    },
+    {
+      "category": "agent-workflow",
+      "content": "SYMPTOM: you run out of wall clock with work unfinished, or you avoid a slow-but-decisive command and take a longer indirect route. CAUSE: you do not know your budget, so you cannot price a decision. ESTABLISH IT AT TURN ZERO: the task statement usually says how long you have. A single blocking tool call can consume ten minutes of it. RULE: before running something that may be slow, decide whether you can afford to sit and wait; if not, start it in the background and poll rather than discovering the limit by hitting it. Discovering a timeout by hitting it repeatedly is a measured way to lose most of a run: one recorded case burned roughly 48 of 56 minutes that way, across five separate blocking calls, having already learned the limit on the first."
+    },
+    {
+      "category": "agent-workflow",
+      "content": "SYMPTOM: two changes, then a test, and the result cannot be attributed to either. CAUSE: an experiment that varies more than one thing answers no question. RULE: run the smallest thing that would DISCRIMINATE between your current belief and the next most likely explanation, and change exactly one thing so the outcome means something. State what you expect to observe BEFORE you look; a result you cannot be surprised by is not evidence. A refuted hypothesis is the most valuable thing you will produce - it narrows the space permanently - and it is the thing least often written down. 'I expected A, observed B, therefore C is ruled out' is worth recording; a restatement of what worked usually is not."
+    },
+    {
+      "category": "agent-workflow",
+      "content": "SYMPTOM: you verify by reading code or output rather than by running something. CAUSE: inspection is cheaper than execution and feels equivalent. It is not: you are graded by execution. RULE: prefer a check that RUNS the thing over one that reads it. If a build, a test command or a reproduction script exists in the workspace, that is the closest thing you have to the grader's own view, and its exit status outranks your reading of the source. When you change something, re-run the check afterwards - an edit whose effect was never observed is a hypothesis, not a fix."
+    },
+    {
+      "category": "agent-workflow",
+      "content": "SYMPTOM: you spend early turns orienting and later discover the orientation was in the wrong place. RULE FOR THE FIRST COMMAND on any unfamiliar workspace: establish shape before detail - what exists, how it is built, and how it is checked - in as few commands as possible, and prefer one command that answers several questions to several that each answer one. Read whatever the workspace says about itself (a README, a Makefile, a test target) before reading its source: those name the entry points, and guessing entry points from source is how orientation turns into exploration. Record, at the end, what your first command SHOULD have been given what you now know. That single lesson transfers to every future task of the same shape, where a finding about this particular problem transfers to none."
+    }
+  ]
+}

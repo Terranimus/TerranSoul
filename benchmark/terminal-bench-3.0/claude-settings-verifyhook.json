@@ -1,0 +1,30 @@
+{
+  "env": {
+    "TERRANSOUL_HOOK_LOG": "/logs/agent/terransoul-failure-hook.jsonl"
+  },
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "terransoul stop-hook",
+            "timeout": 240
+          }
+        ]
+      }
+    ],
+    "PostToolUseFailure": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "terransoul failure-hook",
+            "timeout": 5
+          }
+        ]
+      }
+    ]
+  }
+}

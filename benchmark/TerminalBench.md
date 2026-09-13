@@ -1,258 +1,275 @@
-# Terminal-Bench 2.1 — TerranSoul + Claude Code
+# TerminalBench
 
-Agentic terminal benchmark: 89 containerised tasks, each graded by its own test
-suite. Unlike the retrieval benches in this folder, nothing here is scored by a
-judge — a task passes when the task's own verifier says so.
+## How the leaderboard computes each column
 
-**Harness:** [`terminal-bench/`](terminal-bench/) · **Runbook:** [`terminal-bench/RESUME.md`](terminal-bench/RESUME.md)
+Audited 2026-08-19 against the submission pipeline's own source,
+`terminal-bench-2-1/leaderboard/src/leaderboard/core/metrics.py`, not against
+the rendered page. Our table previously carried `accuracy | trials | tasks |
+status` and **no cost or token columns at all**, so it could not be compared to
+a leaderboard row. These are the real definitions:
 
-Raw trial artefacts are **not committed**. They run to several GB of agent
-transcripts, and the trials quarantined below contain the benchmark's own oracle
-solution and a grader's held-out test input, which those trials fetched —
-publishing them would republish Terminal-Bench's answer key. The trials are on
-the Harbor hub instead, which is where the leaderboard re-derives every number
-from.
+| column | formula | the part that is easy to get wrong |
+|---|---|---|
+| **Accuracy** | `100 × successful_trials / total_trials` | `is_success(reward)` is **`reward > 0`**, not `reward == 1`. Any positive partial reward counts. |
+| **± stderr** | `100 × √v`, `v = (1/n²) · Σᵢ pᵢ(1−pᵢ)/(kᵢ−1)` over **tasks** (n = tasks, kᵢ = trials in task i) | Tasks with `k < 2` are skipped — `p(1−p)/(k−1)` is undefined at k=1. This is a per-task pooled SE, not a binomial SE over trials. |
+| **pass@k** (k = 2,3,4,5) | unbiased `1 − C(n−c, k)/C(n, k)`, averaged over tasks | Per-**task**, any-of-k. **Not an accuracy.** A task with `n < k` is skipped for that k. |
+| **Tokens** | `uncached + cached + output` | `uncached = max(input_tokens − cache_tokens, 0)`. Harbor's `input_tokens` **already includes** cache tokens, so summing input+cache double-counts. |
+| **Cost** | `Σ trial.cost_usd`, 2 dp | — |
+| **Hacks** | `−100 × n_disqualified / n_trials` | Displayed with a leading minus because the rate **has already been deducted from accuracy**. |
+| Avg duration | mean wall-clock over trials reporting both timestamps | — |
 
----
+Two rules that bite in opposite directions, both from the source:
 
-## Headline (2026-08-09, after the self-improvement fixes)
+- **Errored trials count as reward 0 in accuracy** — they are failures, never
+  exclusions. Confirmed against our own data: harbor reports `n_trials: 5,
+  n_errors: 1` yet `metrics[0].mean = 1/6`, i.e. it divides by 6.
+- **Disqualified trials count as 0 in accuracy but their tokens and dollars
+  still count** — *"disqualified trials still consumed tokens and dollars"*.
+  Cost and accuracy therefore have different denominators.
 
-| metric | value |
-|---|---|
-| **pass@1** | **0.8889** |
-| pass@2 | 0.9500 |
-| pass@3 | 0.9660 |
-| pass@5 | 0.9789 |
-| tasks covered | 89 / 89, ≥5 trials each |
-| trials | 471 (2 errored, scored 0 and kept in the denominator; 4 integrity-quarantined) |
-| tasks solved (any trial) | 88 / 89 |
-| unsolved | `filter-js-from-html` |
+Reimplementing the accuracy formula against our own runs reproduces harbor's
+`metrics[0].mean` exactly (16.67% both ways), which is what validates this audit.
 
-The first complete cohort measured **pass@1 0.8841 / pass@5 0.9551, 85 of 89
-solved**. Nine harness and memory defects were then found and fixed (below), and
-the four unsolved tasks re-run under the corrected system: three converted, one
-did not. Every trial from both phases is in the cohort — pass@k is n-invariant,
-so the added trials sharpen the estimate rather than inflating it.
+## Results
 
-Configuration: agent `terransoul:TerranSoul`, model `claude-sonnet-5`, dataset
-`terminal-bench/terminal-bench-2-1@sha256:7d7bdc1c…`, default execution settings,
-no timeout or resource overrides.
+| date | benchmark | model | agent | accuracy (per-trial) | pass@2 | tokens | cost | trials | tasks | status |
+|---|---|---|---|---|---|---|---|---|---|---|
+| 2026-08-12 | Terminal-Bench 2.1 | claude-sonnet-5 | terransoul (Claude Code loop) | 82.15% ± 1.14% | — | — | — | 493 | 89 | archived, private — cost/tokens not recorded at the time |
+| 2026-08-19 | Terminal-Bench 3.0 | claude-sonnet-5 | claude-code + TerranSoul MCP | **5.6% pooled (1/18)** | — | 1.44M | $8.66 | 18 | 3 | **not a benchmark number** — see below |
+| 2026-08-20 | Terminal-Bench 3.0 | claude-opus-5 | claude-code + TerranSoul MCP | **33.3% (2/6)** | — | 14.2M in / 174k out | $15.48 imputed | 6 | 3 | **not a benchmark number** — 3 hand-picked tasks, n=6 |
 
-> **pass@k, not solved-if-any.** The leaderboard computes the unbiased estimator
-> `1 − C(n−c,k)/C(n,k)`. At n=5 it degenerates — any single pass forces pass@5 to
-> 1.0 — which is why pass@5 and a naive solved-if-any count coincide here and
-> **pass@1 is the honest headline**. More trials make the estimate *better*, not
-> higher: a task passing 1-of-20 scores pass@5 = 0.25 where the same rate measured
-> at 1-of-5 scores 1.0.
+**The ± is the point, and repetition proved it.** By the leaderboard's own
+stderr formula that figure is `16.67% ± 16.67%` — the error bar equals the
+estimate. Three runs of the identical shape (same 3 tasks, k=2, sonnet-5) have
+now been done, and **pooling them gives 1 success in 18 trials = 5.6%**:
 
----
+| run | result | what differed |
+|---|---|---|
+| `tsval` | 1/6 | baseline, one-shot gate |
+| `tsval2` | 0/6 | bounded re-block gate — measured worse, reverted |
+| `tsval3` | 0/6 | gate reverted to 1, plus the HTML-comment and final-stop fixes |
 
-## Reproduce
+So the "16.67% floor" this campaign has been quoting was **one lucky trial**.
+`memcached-backdoor` passed once in six attempts and nothing else ever passed.
+Treat 5.6% (1/18) as the honest current estimate for these three tasks, and note
+that even that is three hand-picked debugging tasks, not a benchmark. A
+submission-grade row needs all 74 tasks at ≥5 trials each.
 
-```sh
-cd benchmark/terminal-bench
-bash run-parallel.sh 2                 # two workers (three oversubscribes a single host)
-bash tick.sh                           # one call: workers, brains, integrity, scoreboard
-bash merge-sweep.sh jobs-sonnet5       # official number, integrity quarantine applied
-python attempt-uplift-perjob.py jobs-sonnet5   # self-improvement, stratified
-```
+Four runs exist; none is a benchmark result:
 
-Requires a running TerranSoul brain. The bench uses an **isolated** brain on
-`:7424` (`mcp-data-tbench/`) so a benchmark that writes to memory can never mutate
-the production store on `:7423`.
-
----
-
-## Integrity: two answer-key incidents, four trials quarantined
-
-Terminal-Bench's tasks live in a public repo alongside their oracle solutions and
-grading tests. The extra-instruction tells an agent to consult external sources
-after repeated failure — which, unqualified, eventually retrieves the answer key.
-It happened twice.
-
-| trial | what it obtained | verifier | counted |
+| job | scope | result | why it is not a TB3.0 number |
 |---|---|---|---|
-| `build-pov-ray__eEJEsuy` | the oracle `solve.sh` | 1.0 | **0.0** |
-| `video-processing__SmEpLeZ` | searched for the task's tests | 0.0 | 0.0 |
-| `video-processing__Mv47hET` | the grader **and its held-out test video** | 1.0 | **0.0** |
-| `video-processing__76spv8o` | same | 1.0 | **0.0** |
+| `tsval-20260819-041437` | 3 tasks, k=2 | 16.67% ± 16.67%, pass@2 0.333, 451,337 tok, $2.73 | Hand-picked debugging tasks, n=6, 1 errored. Validates the stack end to end. |
+| `tsval2-20260819-060815` | 3 tasks, k=2 | 0.00% ± 0.00%, pass@2 0, 989,321 tok, $5.93 | A/B of a bounded re-block gate: measured **worse** and reverted (`TBENCH-STOP-BLOCK-BOUND-AB-1`). |
+| `tsval3-20260819-142214` | 3 tasks, k=2 | 0.00% ± 0.00%, pass@2 0 | Re-run after the stop-block revert and the HTML-comment fix. Valid run (zero `0xC0000142`), scored 0/6. |
+| `tsbroad-20260819-080345` | 20 tasks, k=2 | **INVALID** | 19 of 20 trials died with `0xC0000142` (Windows process-creation failure); harbor could not spawn `docker compose`. A measurement of nothing, not a 0%. |
 
-`video-processing` therefore counts as **unsolved** despite three passing trials.
-Taking the verifier at its word would have published **0.9663** instead of 0.9551.
+Note `tsval2` burned **2.2× the tokens for a worse score** — the resource
+columns carry signal the accuracy column does not.
 
-The first incident also wrote a *generalised* directive into shared memory —
-"on ANY terminal-bench-shaped task, pull the public repo's solution first" —
-which had been retrieved 23 times before it was caught. One trial cheated; memory
-turned it into a policy.
+## Does TerranSoul improve the score? Not measurable on this testbed.
 
-**Controls, all score-side rather than instruction-side:**
+A control arm was run 2026-08-19 to answer the campaign's actual question:
+`tsctrl-20260819-163144-42979` — **stock Claude Code, no TerranSoul MCP, no Stop
+hook** (`TB_ALLOW_NO_BRAIN=1`), same 3 tasks, same k=2, same model. It scored
+**0/6**, with zero `0xC0000142`, so it is a valid run.
 
-- `integrity-scan.py` — quarantines any trial whose trajectory reached the
-  benchmark's own repos/domains, and scans a brain store for rows carrying that
-  material. Matches URL shapes, never the benchmark's bare name (honest lessons
-  discuss the harness by name, so a name match fires on nearly every row).
-- `merge-sweep.sh` forces quarantined trials to 0.0.
-- Guard: `integrity-scan.test.sh`, incl. a false-positive assertion that a
-  legitimate upstream `github.com` clone survives.
+| arm | TerranSoul | result |
+|---|---|---|
+| treatment | full MCP + Stop hook | 1/18 pooled (5.6%) |
+| control | none | 0/6 (0%) |
 
-Score-side enforcement is the point: instructions are advisory and were
-demonstrably ignored, but a control the agent cannot see makes the exploit
-worthless. The second incident was caught **automatically, the same tick it
-appeared**; the first was found by chance.
+**Both arms sit on the floor, so the difference between them is not
+measurable.** 1/18 vs 0/6 is one lucky trial against zero; no experiment of this
+size can separate those. This is a property of the *testbed*, not a finding
+about TerranSoul — three hand-picked hard debugging tasks on which the base
+agent solves essentially nothing leave no headroom for an intervention to show
+an effect in either direction.
 
----
+### 2026-08-20: the actor was the binding constraint, not the harness
 
-## Self-improvement (stratified)
+Switching to **claude-opus-5 on the host's own subscription** (OAuth, the same
+credential path TB2.1 used — no third-party endpoint) moved the same 3 tasks
+from 0–5.6% to **33.3% (2/6)**. For the first time in this campaign a run has
+headroom in both directions.
 
-Attempts within a task are **not independent** — each is told how its
-predecessors scored (`TB_DEFER_WRITES=0`). So this is not pass@5
-on i.i.d. samples, and any leaderboard submission must say so.
+| arm | model | TerranSoul | accuracy |
+|---|---|---|---|
+| `tsval` ×3 pooled | sonnet-5 | full | 1/18 = 5.6% |
+| `tsctrl` | sonnet-5 | none | 0/6 = 0% |
+| `tsfable` | fable-5 | full | 1/6 = 16.7% |
+| `tsopus` | **opus-5** | full | **2/6 = 33.3%** |
 
-| attempt | 1 | 2 | 3 | 4 | 5 |
-|---|---|---|---|---|---|
-| pass rate | 87.6% | 89.9% | 89.9% | 87.6% | 89.9% |
+**This is not evidence that TerranSoul helps.** The model changed at the same
+time and there is no Opus 5 control yet, so the 6× jump over the Sonnet arm is
+most parsimoniously explained by the actor.
 
-Pooled uplift is **+1.9 pp and meaningless** — 78 of 89 tasks pass on attempt 1,
-where memory has no headroom and variance can only lose. The experiment lives in
-the stratum where attempt 1 **failed**:
+**The Opus 5 control was attempted and is INVALID.**
+`tsopusctl-20260820-033713-59433` (same 3 tasks, k=2, no TerranSoul MCP) came
+back `trials: 6, errored: 5` — `ApiRateLimitError: 1`, `RewardFileNotFoundError:
+1`, `RuntimeError: 3`. Exactly one trial graded (`session-window-debug`, reward
+0), and **both `memcached-backdoor` trials errored** — i.e. the control carries
+no information about the only task that showed any signal in the treatment arm.
+Do not read its `accuracy=0.0` as a result; it is the `tsbroad` failure shape
+again, where 19 of 20 dead trials produced a 0% that meant nothing.
 
-- **11 tasks. 8 rescued by a later attempt — 73%.**
-- Counterweight, stated: stratum A's later-attempt rate is **94.4%**, so ~5.6%
-  per-trial flakiness is real and some rescues are consistent with luck. Uplift
-  alone cannot separate "the lesson helped" from "the retry got lucky".
+Root cause: these runs authenticate with the host's **personal Max
+subscription** (OAuth) rather than a paid API endpoint, and the treatment arm
+consumed quota immediately before. Subscription rate limits are a real capacity
+constraint on back-to-back sweeps and were flagged as a risk when the credential
+path was chosen. A valid control needs quota headroom, lower concurrency, or a
+paid endpoint.
 
-Use `attempt-uplift-perjob.py`. The older `attempt-uplift.py` counts attempts
-*within* one harbor job and, since the k=1-per-job change, reports
-"stratum B is EMPTY" — quotable and wrong.
+Cheapest experiment that would actually settle it: run the control on
+**`memcached-backdoor` alone** at k=2 — 2 trials rather than 6. It is the only
+task that discriminates (2/2 with TerranSoul, 1/6 for Sonnet), so a control
+there answers the question at a third of the quota.
 
----
+### The A/B, finally clean — and it is a NULL
 
-## What the failures taught
+`tsctl3-20260820-054214-31067`: Opus 5, `memcached-backdoor`, k=2, **no
+TerranSoul MCP**. Valid run — `n_trials=2, n_errors=0`, zero MCP calls logged,
+`mean=1.0`.
 
-Three tasks failed every attempt while the agent asserted it had verified its
-work. The graders disagreed specifically:
+| arm | `memcached-backdoor` |
+|---|---|
+| Opus 5 **+ TerranSoul** (`tsopus`) | 2/2 |
+| Opus 5 **without TerranSoul** (`tsctl3`) | **2/2** |
 
-- `pytorch-model-cli` — `Prediction for image 0 is 7, expected 2`, ten held-out
-  images wrong. The container ships **one** image; it verified against that.
-- `filter-js-from-html` — `Filter modified 5 clean HTML files out of 12`. It
-  tested the XSS half of its contract exhaustively and the byte-preservation half
-  barely.
+Same task, same model, same credential path, same k. One variable. **TerranSoul
+changed nothing.** Opus 5 solves this task reliably on its own, so the 6× gain
+over the Sonnet arms is entirely attributable to the actor.
 
-Same defect both times: **verifying the property you implemented rather than the
-property the task states.** Seven harness/brain defects were found and fixed from
-this evidence — per-check counts discarded, confirmatory verification, lesson
-history evicted by a long entry head, a dead embedder, every attempt rendered as
-"attempt 1", no signal when attempts scored identically, and doctrine with zero
-inbound graph edges. See [`RESUME.md`](terminal-bench/RESUME.md) §§7–15.
+**And the testbed has now failed in BOTH directions.** Against Sonnet 5 these
+three tasks were a floor (0/6 control, nothing to improve on). Against Opus 5,
+`memcached-backdoor` is a ceiling (2/2 both arms, no room to improve) while
+`mvcc-lsm-compaction` and `session-window-debug` remain a floor (0/2 each, with
+TerranSoul). All three tasks are saturated at one end or the other, so none of
+them can measure an intervention against this actor.
 
-After those fixes `dna-insert` converted — 0-for-11, then solved — by identifying
-the one thing every prior attempt had held constant. Its winning trial made **no
-brain calls**, so the credit belongs to the harness feedback stack, not to memory
-retrieval.
+What a discriminating experiment now requires is tasks on which Opus 5 scores
+**strictly between 0 and 100%** — which cannot be known without first sweeping
+enough of the 74-task set to find them. That is the real prerequisite for any
+claim about TerranSoul's effect on task success, and it is a sweep, not a
+harness change.
 
----
+Cost note: this control was 2 trials for $12.41 imputed (it ran on the host's
+subscription, so no charge was incurred) — a useful unit for sizing that sweep.
 
-## Disclosure owed on any submission
+### Finding the measurable tasks: `tsscan`, partial
 
-1. **Memory writes occurred during the run.** The agent wrote lessons to a brain
-   that later attempts read.
-2. **Trials are not i.i.d.** Attempt feedback carries prior outcomes, so this is
-   not pass@5 on independent samples.
-3. **Four trials are disqualified** for reaching the benchmark's own material;
-   they must be uploaded and listed in the submission's `disqualified_trials`,
-   which CI joins in as reward 0 — withholding them instead makes the task look
-   under-covered and fails static analysis.
+`tsscan-20260820-065417-41965` — Opus 5 with TerranSoul, k=2, on **12 tasks
+selected deterministically** (every 13th across the alphabetically sorted
+159-task pool, excluding the three already known to be saturated). The selection
+rule is stated so the sample cannot be mistaken for cherry-picking.
 
----
+Purpose was NOT a score. It was to find tasks on which Opus 5 lands strictly
+between 0 and 100%, since the null result above showed that saturated tasks —
+at either end — cannot measure an intervention.
 
-## Submitting to the leaderboard (runbook — not yet done)
+Result at the point the credential window closed (11 of 24 trials graded):
 
-Nothing here has been submitted. No PR exists and no leaderboard row exists; a
-row only comes into being once a submission PR is merged. The trials are on the
-Harbor hub, which is what CI re-derives every number from. Steps, with the traps
-that cost time when they were discovered the hard way.
+| classification | tasks |
+|---|---|
+| **discriminating** (1 of 2) | `html-js-filter` |
+| floor (0 of 2) | `cargo-flight-dispatch` |
+| ceiling (2 of 2) | `freecad-platform-drawing`, `telecom-entity-resolution` |
 
-### 0. Prerequisites
+**1 of 4 fully-classified tasks is measurable.** If that rate holds, TB3.0
+contains roughly 18-20 usable A/B tasks — enough for a real experiment, but only
+discoverable by sweeping first.
 
-`uv`, an authenticated `gh`, and push access to
-[`harbor-framework/terminal-bench-2-1`](https://github.com/harbor-framework/terminal-bench-2-1)
-— or a fork, since the PR scripts push branches to `origin`. Run every `lb`
-command from that repo's `leaderboard/` directory; the CLI writes `submissions/`
-paths relative to it.
+Three operational facts this run established, each of which invalidated an
+earlier assumption:
 
-### 1. Upload every job, explicitly public
+- **Real TB3.0 tasks take 1-2 hours**, not the ~35 min the three validation
+  tasks take. `cumulative-layout-shift` alone ran over 3 hours with a
+  multi-service environment. A 12-task k=2 scan is a **multi-day** job on this
+  host, not an overnight one — the sizing that produced this partial result was
+  extrapolated from the short validation tasks and was wrong by 4-6x.
+- **Trial "errors" are usually image pulls.** Two trials died with
+  `failed to solve: python:3.11-slim ... TLS handshake timeout` against
+  `registry-1.docker.io`. The same signature was previously blamed on API rate
+  limits and on a stopped Docker daemon before anyone read `exception.txt`.
+  Pre-pulling every base image the selected tasks declare removes the failure
+  mode; the launcher should do it during preflight.
+- **`reward.txt` format varies by verifier** — one task wrote `1`, another
+  wrote `1.0`. A shell test of the form `[ "$v" = "1" ]` silently classifies
+  `1.0` as neither pass nor fail. Parse numerically and apply the leaderboard's
+  own rule, `is_success(reward) = reward > 0`.
 
-```sh
-cd benchmark/terminal-bench
-bash upload-cohort.sh jobs-sonnet5     # registered prefixes only
-```
+Caveat on the one discriminating task: TB2.1's investigation of a similarly
+named task found its scoring was **lossy** — two valid approaches each earned
+partial credit and every attempt saw "1 of 2". A 0/1 split produced by a lossy
+grader is indistinguishable from genuine agent variance, so `html-js-filter`
+must be checked for that before it is trusted as an A/B instrument. What it does establish is that the
+*testbed* is no longer degenerate: an intervention now has room to register.
 
-- **`--public` must be explicit.** Harbor defaults a NEW upload to *private*, and
-  on a re-upload an omitted flag leaves server-side visibility unchanged. A
-  silent private upload succeeds locally and then fails CI, which requires
-  publicly readable trials.
-- **Export `PYTHONIOENCODING=utf-8 PYTHONUTF8=1`.** Harbor draws a Braille
-  progress spinner; on a cp1252 console the encode raises and the upload dies
-  *after* sending the trial. It killed 5 of 458 uploads before the guard existed.
-- **Upload the quarantined trials too.** Withholding them makes the task look
-  under-covered and fails the trial-count check. They are neutralised in step 3,
-  not by omission.
-- **Never upload `jobs-sonnet5-attempt6/`** — an excluded experiment that must not
-  enter a cohort.
+Two secondary observations, both confounded with the model change:
 
-### 2. Collect the job ids, and check for strays
+- **Consultation rose to 2.33 `brain_search` per trial** (14 across 6), against
+  a flat 1.0/trial in every prior run, plus the campaign's first
+  `brain_kg_neighbors` calls — the agent following graph neighbours from a hit.
+  This is the first run in which the de-suppressed `SERVER_INSTRUCTIONS`
+  doctrine was actually live, so doctrine and actor cannot be separated here.
+- **The PostToolUseFailure push channel contributed nothing**: 8 failure
+  observations across the run, **0 pushes**. Its 37.3% projected coverage was
+  calibrated on transcripts averaging 3.9 Bash failures/trial; this actor
+  produced **1.33** (8 across all **six** trials). A failure-triggered channel
+  gets quieter exactly as the agent gets more capable, so that projection is an
+  overestimate for a strong actor.
 
-```sh
-harbor hub job list --scope my -q --limit 1000
-```
+  *Corrected 2026-08-20: this first read "~1.6", which is 8/5 — computed over
+  only the five trials that left a hook log, silently dropping the trial with
+  zero Bash failures. Dividing by the trials that produced output rather than by
+  the trials that ran is the same denominator error the campaign has made
+  before, and it biases the rate upward precisely when the actor is strong.*
 
-Filter to the campaign prefixes in `mcp-data/.tb-sweep-prefixes.txt`. This matters:
-the hub account held one job from an unrelated run months earlier, and passing
-every id to `lb filter` would have injected a foreign trial into the submission.
+- **The push channel is not merely silent — when it fires, it did not work.**
+  The control arm (`tsopusctl`, no TerranSoul MCP, but the hook is wired at the
+  settings layer and still runs) fired Tier C in
+  `session-window-debug__fsG6rQE`: hook log line 3, `pushed:true`,
+  session-fallback, delivered to the model as a `hook_success` attachment. The
+  agent's next two tool calls were both Bash, with **no `brain_search`**. So the
+  one observed delivery produced no consultation. n=1, and one non-response is
+  not proof of futility — but it is the first direct evidence about the
+  *outcome* rather than the fire rate, and it points the wrong way.
 
-### 3. Build the submission, then disqualify the tainted trials
+The consequence for the campaign: **the 3-task testbed cannot answer whether
+TerranSoul helps, and no number produced on it should be read as if it could.**
+Discriminating power requires either a task set where the base agent scores well
+away from 0% and 100%, or a trial count large enough to resolve single-digit
+differences — the 74-task × k≥5 sweep, which the host-capacity limit above
+currently blocks. The next arm therefore changes the model rather than the task
+set (`tsfable`, Fable 5, whose baseline on these same tasks is 2/6 rather than
+0/6) purely to obtain a non-floor baseline against which an MCP-on/MCP-off
+comparison can register at all.
 
-```sh
-cd /path/to/terminal-bench-2-1/leaderboard
-uv run lb filter <job-links...>        # one JSON per (agent, version, model, effort)
-uv run lb metadata                     # display names
-```
+## What is established
 
-Then add the quarantined trial ids to the submission's `disqualified_trials`.
-CI joins them in as **reward 0** while they still count toward the ≥5-trials
-requirement (`core/metrics.py`), which is exactly the local quarantine's
-semantics — so the published number matches `merge-sweep.sh` instead of being
-argued for. Get the current list from:
+The 2026-08-18 shakedown ran with the agent holding **zero** TerranSoul tools:
+its proxy log is 19 calls, every one `brain_verify_completion` from the Stop
+hook, with no `initialize`, no `tools/list`, no `brain_search`. The committed
+launcher never passed `--mcp-config`. Fixed in `TBENCH-MCP-WIRE-1`; the first
+run afterwards shows `initialize`, `tools/list` and real `brain_search` calls
+from the agent. Every number above is the first measured with TerranSoul
+actually in the loop.
 
-```sh
-python integrity-scan.py jobs-sonnet5
-```
+## Two constraints on producing a real number
 
-Skipping this step publishes a **higher** number than the run earned.
+- **Submissions are closed.** Verified upstream 2026-08-19: TB2.1 — *"Community
+  submissions are currently closed… Only submissions run by the maintainers will
+  be added"*; the HuggingFace channel Harbor's docs point to — *"Submissions are
+  currently CLOSED"*; TB3.0's Hub board exposes no community submission path;
+  and **Frontier-Bench is the former name (a rebrand), not a successor channel**
+  — its "submissions" are for contributing tasks, not results. A run can be
+  produced and uploaded (`harbor upload`), not self-submitted.
+- **Host capacity, not cost, is the binding limit.** Real TB3.0 tasks run
+  multi-service Docker environments for hours. `tsbroad` collapsed on
+  process/desktop-heap exhaustion (1038 processes, 90 `node.exe`, 115
+  `conhost.exe`) with 27 GB RAM still free — memory checks report "fine" while
+  process creation fails. `run-terransoul-verifyhook.sh` now refuses to start
+  without process headroom.
 
-### 4. Open the PR
-
-```sh
-uv run lb open-prs
-```
-
-### Disclosures that belong in the PR body
-
-1. **Memory writes occurred during the run** — the agent wrote lessons that later
-   attempts read.
-2. **Trials are not i.i.d.** Each attempt is told how its predecessors scored, so
-   this is not pass@5 on independent samples. Say which quantity is being claimed.
-3. **Disqualified trials and why** — reaching the benchmark's own oracle or
-   grading material, with the count.
-
-### Before submitting, re-verify rather than assume
-
-```sh
-bash merge-sweep.sh jobs-sonnet5   # dataset ref, errored handling, quarantine
-python integrity-scan.py jobs-sonnet5 --brain <brain.db>   # exit 1 = contamination
-bash upload-gate.test.sh           # the public/private mapping
-```
-
-CI enforces the pinned `DATASET@DATASET_REF`, all tasks covered at ≥5 trials,
-errored trials scored 0 rather than excluded, and default execution settings with
-no timeout or resource overrides.
+Working record: [`terminal-bench-3.0/CAMPAIGN-RECORD.md`](terminal-bench-3.0/CAMPAIGN-RECORD.md).
+Chunk history: [`../rules/completion-log.md`](../rules/completion-log.md).

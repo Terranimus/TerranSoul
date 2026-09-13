@@ -1,0 +1,44 @@
+{
+  "_comment": [
+    "The TerranSoul MCP server, as handed to Claude Code's OWN MCP client.",
+    "",
+    "WHY THIS FILE EXISTS: `run-terransoul-verifyhook.sh` used to pass",
+    "TERRANSOUL_MCP_URL as a container env var and nothing else. That env var is",
+    "read ONLY by the `terransoul stop-hook` binary (packages/terransoul-cli's",
+    "`mcpFromEnv`), never by Claude Code — so the AGENT had zero TerranSoul tools",
+    "while the Stop hook had all the ones it needed. Measured on the 2026-08-18",
+    "shakedown: jobs-terransoul/tsvh-shakedown-20260818-212303-30995/config.json",
+    "resolved with `agents[0].mcp_servers` absent, and",
+    "proxy-logs/proxy-tsvh-20260818-210944.jsonl recorded 19 calls, every one of",
+    "them brain_verify_completion from the hook — no `initialize`, no",
+    "`tools/list`, no `brain_search`. Contrast",
+    "proxy-logs/proxy-judgefix-20260817-124232.jsonl (same agent class, launched",
+    "from a config that DID declare mcp_servers): initialize, tools/list,",
+    "brain_search, brain_kg_neighbors all present.",
+    "",
+    "SHAPE, verified against the installed Harbor rather than assumed:",
+    "harbor/cli/utils.py::load_mcp_servers treats a top-level `mcpServers` map as",
+    "a Claude-style config, folds each key in as `name`, renames `type` ->",
+    "`transport`, and normalises `http` -> `streamable-http` (utils.py:176-177,",
+    "and again in MCPServerConfig.normalize_transport). harbor/cli/jobs.py:1235-",
+    "1295 merges the result into agent.mcp_servers, and",
+    "harbor/agents/installed/claude_code.py:1559-1585 writes it into",
+    "CLAUDE_CONFIG_DIR/.claude.json only when the list is non-empty — which is",
+    "exactly why the shakedown container's .claude.json had no mcpServers key.",
+    "",
+    "PORT 7425 IS THE AUTH PROXY, NOT A BRAIN. mcp-auth-proxy.mjs listens there,",
+    "injects the bearer token the container cannot hold, and refuses every write",
+    "tool. It forwards to whatever TB_PROXY_UPSTREAM_PORT names, whose DEFAULT is",
+    "7423 = the PRODUCTION brain. The launcher therefore does not trust this file",
+    "to be pointed at the right store: it probes /health THROUGH this URL and",
+    "reads the port the serving brain reports about ITSELF, refusing to start",
+    "unless that is the isolated bench brain. See run-terransoul-verifyhook.sh's",
+    "'MCP wiring' preflight."
+  ],
+  "mcpServers": {
+    "terransoul": {
+      "type": "http",
+      "url": "http://host.docker.internal:7425/mcp"
+    }
+  }
+}

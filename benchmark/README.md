@@ -18,7 +18,8 @@ benchmark/
 │   ├── locomo-mteb/                — BENCH-LCM-1 … LCM-11
 │   ├── locomo-at-scale/            — BENCH-SCALE-1 / SCALE-1b / SCALE-2 (harness)
 │   └── agentmemory-quality/        — BENCH-AM-1 … AM-7
-├── terminal-bench/                  — Terminal-Bench 2.1 harness (see TerminalBench.md)
+├── terminal-bench-2.1/              — archived Terminal-Bench 2.1 harness and provenance
+├── terminal-bench/                  — active Terminal-Bench 3.0 campaign workspace
 ├── scripts/
 │   └── README.md                   — pointers to runner scripts in scripts/
 └── fixtures/
@@ -38,7 +39,8 @@ benchmark/
 | LoCoMo MTEB retrieval | BENCH-LCM-8 (2026-05-12, canonical) | R@10 **68.3 %** (rrf_rerank, full 1976-q) | [terransoul/locomo-mteb/](terransoul/locomo-mteb/README.md) |
 | LoCoMo-at-scale | BENCH-SCALE-1b (2026-05-13) | 100k corpus, R@10 **64.0 %**, NDCG@10 **46.7 %** | [terransoul/locomo-at-scale/](terransoul/locomo-at-scale/README.md) |
 | Token efficiency | regenerated 2026-06-25 | **91.6 %** savings vs full-context paste at R@10 66.8 % (no-vec RRF, post RRF-fix) | [COMPARISON.md](COMPARISON.md) |
-| Terminal-Bench 2.1 (agentic) | first complete cohort (2026-08-09) | **pass@1 0.8841**, pass@5 0.9551, 89/89 tasks x >=5 trials | [TerminalBench.md](TerminalBench.md) |
+| Terminal-Bench 2.1 (archived agentic) | closed 2026-08-12 | **82.15% ± 1.14% per trial**, 89/89 tasks solved by at least one trial | [terminal-bench-2.1/](terminal-bench-2.1/README.md) |
+| Terminal-Bench 3.0 (agentic) | pending dataset + runner validation | — | [TerminalBench.md](../TerminalBench.md) |
 
 ## How to reproduce
 

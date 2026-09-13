@@ -1,6 +1,6 @@
 # MILLION-RESUME-BENCH Report
 
-Date: 2026-07-09T01:14:09.615Z
+Date: 2026-08-22T18:08:59.688Z
 Corpus: 1,000,000 synthetic resumes, seed 20260703
 Systems: rrf | top-k: 100
 
@@ -10,7 +10,11 @@ Systems: rrf | top-k: 100
   10 job areas, canonical skill IDs with Latin-script tech tokens in every language.
 - Gold predicate per JD: `area equal AND >= 2 requiredSkills present AND years >= minYears`.
 - Ingest through the `longmemeval-ipc` JSONL shim (same MemoryStore code path production uses).
-- Each JD query runs 5x per system; latency is p50/p95 over the 5 runs; accuracy from the LAST run.
+- Each JD query issues one untimed warm-up request (discarded, primes caches/plans) then
+  5 timed runs per system; latency_ms.p50/p95 are computed over ONLY those 5 warm timed runs
+  (JD-MILLION-WARMP50-1); the warm-up's own latency is preserved separately as
+  `latency_ms.cold_ms` so the cold-start cost stays visible/auditable. Accuracy is from the
+  LAST timed run.
 - Recall@K is reported in two labelled forms: **capped** = hits / min(K, |gold|)
   (1.0 achievable when |gold| > K) and **raw** = hits / |gold| (classic recall,
   bounded by K/|gold| at this gold density). NDCG@10 uses binary relevance.
@@ -22,38 +26,43 @@ Systems: rrf | top-k: 100
 | Variable | Value |
 |---|---|
 | LONGMEM_DATA_DIR | C:\ts-bench-cache\jdbench\store |
+| LONGMEM_SHIM_EXE | D:/Git/TerranSoulApp/target-copilot-bench/release/longmemeval-ipc.exe |
 | LONGMEM_DATA_DIR (effective) | C:\ts-bench-cache\jdbench\store |
 | node | v24.3.0 |
 | platform | win32 x64 |
 
 ## Ingest
 
-Path: add_sessions_jsonl
-Rows: 1,000,000 in 466.3s (**2,144 rows/s** overall)
+Path: skipped (resume complete)
+Rows: 0 in 0.0s (**0 rows/s** overall)
 
 | Checkpoint rows | Slice rows/s | Overall rows/s | Elapsed s |
 |---:|---:|---:|---:|
-| 100,000 | 3,248 | 3,248 | 30.8 |
-| 200,000 | 2,766 | 2,988 | 66.9 |
-| 300,000 | 2,334 | 2,733 | 109.8 |
-| 400,000 | 2,393 | 2,639 | 151.6 |
-| 500,000 | 2,233 | 2,546 | 196.4 |
-| 600,000 | 2,120 | 2,464 | 243.5 |
-| 700,000 | 1,986 | 2,382 | 293.9 |
-| 800,000 | 1,900 | 2,309 | 346.5 |
-| 900,000 | 1,576 | 2,195 | 410.0 |
-| 1,000,000 | 1,774 | 2,144 | 466.3 |
 
 ## Results
 
 ### system: rrf
 
-| JD | Lang | Gold | R@10 (capped/raw) | R@50 | R@100 | P@10 | NDCG@10 | p50 | p95 |
-|---|---|---:|---|---|---|---:|---:|---:|---:|
-| jd-en-backend | en | 1441 | 90.0% / 0.6% | 82.0% / 2.8% | 83.0% / 5.8% | 90.0% | 93.4% | 1288.09ms | 11493.45ms |
-| jd-vi-data-engineering | vi | 1166 | 30.0% / 0.3% | 14.0% / 0.6% | 16.0% / 1.4% | 30.0% | 45.4% | 1293.44ms | 10799.36ms |
-| jd-ja-mobile | ja | 925 | 60.0% / 0.6% | 44.0% / 2.4% | 34.0% / 3.7% | 60.0% | 65.0% | 1304.39ms | 5235.06ms |
-| jd-en-backend-typo | en | 1441 | 70.0% / 0.5% | 64.0% / 2.2% | 34.0% / 2.4% | 70.0% | 71.0% | 1287.44ms | 11359.12ms |
+| JD | Lang | Gold | R@10 (capped/raw) | R@50 | R@100 | P@10 | NDCG@10 | p50 (warm) | p95 (warm) | cold (warm-up) |
+|---|---|---:|---|---|---|---:|---:|---:|---:|---:|
+| jd-en-backend | en | 1441 | 90.0% / 0.6% | 82.0% / 2.8% | 83.0% / 5.8% | 90.0% | 93.4% | 0.72ms | 1.39ms | 23158.49ms |
+| jd-vi-data-engineering | vi | 1166 | 30.0% / 0.3% | 14.0% / 0.6% | 16.0% / 1.4% | 30.0% | 45.4% | 0.72ms | 1.28ms | 4326.23ms |
+| jd-ja-mobile | ja | 925 | 90.0% / 1.0% | 76.0% / 4.1% | 50.0% / 5.4% | 90.0% | 93.6% | 0.82ms | 1.28ms | 8131.55ms |
+| jd-en-backend-typo | en | 1441 | 70.0% / 0.5% | 60.0% / 2.1% | 34.0% / 2.4% | 70.0% | 71.0% | 0.46ms | 1.16ms | 5483.57ms |
+
+## Typo-dictionary cache counters (TYPESENSE-ADAPT-6-CACHE-SCALE-GAP-1)
+
+Cumulative process-wide values snapshotted after each query block
+(diff consecutive rows for per-query deltas). `after ingest` is the
+pre-query baseline.
+
+| Phase | Hits | Miss cold | Miss mutations | Miss data_version | Hit rate | Rebuilds (p50 ms) | Expansions (p50 ms) |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| after ingest | 0 | 0 | 0 | 0 | n/a | 0 (—) | 0 (—) |
+| rrf jd-en-backend | 0 | 0 | 0 | 0 | n/a | 0 (—) | 0 (—) |
+| rrf jd-vi-data-engineering | 0 | 0 | 0 | 0 | n/a | 0 (—) | 0 (—) |
+| rrf jd-ja-mobile | 0 | 0 | 0 | 0 | n/a | 0 (—) | 0 (—) |
+| rrf jd-en-backend-typo | 0 | 0 | 0 | 0 | n/a | 0 (—) | 0 (—) |
 
 ## Per-language gold composition and hits
 
@@ -88,8 +97,8 @@ Hits = languages of gold resumes found in the top-100 (last run).
 
 | Lang | Gold | rrf hits |
 |---|---:|---:|
-| en | 375 | 1 |
-| ja | 151 | 33 |
+| en | 375 | 0 |
+| ja | 151 | 50 |
 | vi | 134 | 0 |
 | zh | 77 | 0 |
 | ko | 70 | 0 |

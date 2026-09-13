@@ -925,6 +925,45 @@
     sample size changes that. A full-500 <code>think</code> arm would confirm the paths really are
     identical; it could not give the gap a way back.</p>
 
+    <p class="note"><code>think</code>'s retrieval is no longer <code>chat</code>'s retrieval reached
+    through the same function: a cross-surface audit found MCP's own <code>brain_search</code> think
+    rung already bridging over the knowledge graph, a direct violation of the standing rule that a
+    surface may never differ in whether multi-hop runs. Desktop/CLI's <code>think</code> now pins the
+    same multi-hop bridge explicitly, so the two paths genuinely diverge &mdash; a deliberate mechanism
+    <code>chat</code> does not have, not a regression. Full-500: <code>chat</code> NDCG@10 93.9 against
+    <code>think</code>'s 93.8, a 0.1-point gap. See the n&nbsp;=&nbsp;500 table directly below and row
+    12 for the full account, including why the gap is this small on a corpus with no graph edges to
+    bridge over.</p>
+
+    <h4 id="four-rungs-n-500-three-measured-one-owed">Four rungs at n&nbsp;=&nbsp;500 &mdash; three measured, one still owed</h4>
+    <p>The n&nbsp;=&nbsp;50 table above is deliberately not comparable to any full-500 figure &mdash;
+    stated as the first caveat on this page long before this row existed, and still true. This is the
+    full-500 analogue, measured the same way the coverage table above was: one arm per process, current
+    code, <code>OLLAMA_EMBED_NUM_GPU=99</code>, 2026-08-11. Three of the four rungs are here;
+    <code>max</code>'s full-500 arm has never been run (tracked as an owed follow-up, not silently
+    dropped) &mdash; the 50-question <code>max</code> row above is the only measured evidence for that
+    rung at any sample size.</p>
+
+    <div class="tablewrap"><table class="compare">
+      <tr><th>Rung</th><th>R@5</th><th>R@10</th><th>R@20</th><th>NDCG@10</th><th>MRR@20</th><th>Mean latency</th></tr>
+      <tr><td><code>chat</code></td><td>99.2&nbsp;%</td><td>99.8&nbsp;%</td><td>100.0&nbsp;%</td><td>93.9</td><td>94.4</td><td>223.31&nbsp;ms</td></tr>
+      <tr><td><code>think</code></td><td>99.4&nbsp;%</td><td>99.8&nbsp;%</td><td>100.0&nbsp;%</td><td>93.8</td><td>94.2</td><td>1,259.92&nbsp;ms</td></tr>
+      <tr><td><code>research</code></td><td>99.4&nbsp;%</td><td>99.8&nbsp;%</td><td>100.0&nbsp;%</td><td>94.3</td><td>94.8</td><td>7,380.56&nbsp;ms</td></tr>
+      <tr><td class="note-row"><code>max</code></td><td colspan="6"><em>full-500 arm not run &mdash; owed, tracked, not silently dropped. The n&nbsp;=&nbsp;50 row above is this rung's only measured evidence.</em></td></tr>
+    </table></div>
+
+    <p>The shape is worth reading against the n&nbsp;=&nbsp;50 ladder rather than in isolation.
+    <code>chat</code> and <code>think</code> are no longer a byte-identical tie &mdash; <code>think</code>
+    is now measurably <em>below</em> <code>chat</code> (93.8 against 93.9), not because the fix
+    regressed anything, but because <code>think</code>'s multi-hop bridge has no graph edges to walk on
+    this corpus (LongMemEval-S is built fresh per question with <code>LONGMEM_KG_EDGES</code> unset), so
+    it degrades to something very close to &mdash; but not exactly &mdash; plain RRF. R@5/R@10/R@20 stay
+    at or above the independently-reproduced 2026-08-01/08-03 <code>chat</code> floor
+    (<code>rel010-full500-chat/</code>, 99.2/99.8/100.0), the deterministic recall metric confirming the
+    fix did not cost anything real. The residual 0.1&ndash;0.17-point NDCG/latency wobbles read as
+    embedder run-to-run noise, the same class this page already measured once at 0.33 points from a
+    CPU/GPU kernel difference (see the coverage table above, Stage&nbsp;5).</p>
+
     <h3 id="how-terransoul-compares">How TerranSoul compares</h3>
     <p>Eight figures, one per measurement axis. They are separate charts rather than one because
     the numbers are not on a shared axis: this page&rsquo;s rungs are LongMemEval-S retrieval, the

@@ -1,0 +1,13 @@
+extract-moves-from-video
+filter-js-from-html
+
+[2026-09-08] trial-contamination-check.mjs prints "-> REFUSING" as its verdict
+word (line ~190) regardless of how the caller uses it. run-dg.sh only treats it
+as fatal under TB_SUBMITTABLE=1; otherwise it is advisory (`|| true`). So a
+non-submittable sweep logs a LOUD "REFUSING" that refuses nothing, once per
+task. run-dg.sh:604 already records this exact line costing three runs of
+investigating innocent components after an unrelated silent exit 2.
+FIX: make the verdict word reflect the caller's mode (e.g. --advisory =>
+"-> CONTAMINATED (advisory, not blocking)"), so the label matches the action.
+Deferred because the sweep re-invokes this script once per task; editing it
+mid-run would take effect on the next trial.

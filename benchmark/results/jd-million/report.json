@@ -1,6 +1,6 @@
 {
   "benchmark": "MILLION-RESUME-BENCH",
-  "generated_at": "2026-07-09T01:14:09.615Z",
+  "generated_at": "2026-08-22T18:08:59.688Z",
   "config": {
     "count": 1000000,
     "seed": 20260703,
@@ -8,107 +8,32 @@
       "rrf"
     ],
     "top_k": 100,
-    "resume": false,
+    "resume": true,
+    "real_pdf": false,
     "query_runs": 5,
     "corpus_dir": "D:\\Git\\TerranSoulApp\\target-copilot-bench\\jdbench",
     "hybrid_weights": null
   },
   "env": {
     "longmem_vars": {
-      "LONGMEM_DATA_DIR": "C:\\ts-bench-cache\\jdbench\\store"
+      "LONGMEM_DATA_DIR": "C:\\ts-bench-cache\\jdbench\\store",
+      "LONGMEM_SHIM_EXE": "D:/Git/TerranSoulApp/target-copilot-bench/release/longmemeval-ipc.exe"
     },
     "effective_data_dir": "C:\\ts-bench-cache\\jdbench\\store",
     "node": "v24.3.0",
     "platform": "win32 x64"
   },
   "ingest": {
-    "rows": 1000000,
-    "elapsedSeconds": 466.321,
-    "rowsPerSecond": 2144,
-    "checkpoints": [
-      {
-        "rows": 100000,
-        "sliceRows": 100000,
-        "sliceSeconds": 30.786,
-        "sliceRowsPerSecond": 3248,
-        "overallSeconds": 30.786,
-        "overallRowsPerSecond": 3248
-      },
-      {
-        "rows": 200000,
-        "sliceRows": 100000,
-        "sliceSeconds": 36.155,
-        "sliceRowsPerSecond": 2766,
-        "overallSeconds": 66.941,
-        "overallRowsPerSecond": 2988
-      },
-      {
-        "rows": 300000,
-        "sliceRows": 100000,
-        "sliceSeconds": 42.841,
-        "sliceRowsPerSecond": 2334,
-        "overallSeconds": 109.783,
-        "overallRowsPerSecond": 2733
-      },
-      {
-        "rows": 400000,
-        "sliceRows": 100000,
-        "sliceSeconds": 41.789,
-        "sliceRowsPerSecond": 2393,
-        "overallSeconds": 151.572,
-        "overallRowsPerSecond": 2639
-      },
-      {
-        "rows": 500000,
-        "sliceRows": 100000,
-        "sliceSeconds": 44.787,
-        "sliceRowsPerSecond": 2233,
-        "overallSeconds": 196.359,
-        "overallRowsPerSecond": 2546
-      },
-      {
-        "rows": 600000,
-        "sliceRows": 100000,
-        "sliceSeconds": 47.177,
-        "sliceRowsPerSecond": 2120,
-        "overallSeconds": 243.535,
-        "overallRowsPerSecond": 2464
-      },
-      {
-        "rows": 700000,
-        "sliceRows": 100000,
-        "sliceSeconds": 50.354,
-        "sliceRowsPerSecond": 1986,
-        "overallSeconds": 293.889,
-        "overallRowsPerSecond": 2382
-      },
-      {
-        "rows": 800000,
-        "sliceRows": 100000,
-        "sliceSeconds": 52.632,
-        "sliceRowsPerSecond": 1900,
-        "overallSeconds": 346.522,
-        "overallRowsPerSecond": 2309
-      },
-      {
-        "rows": 900000,
-        "sliceRows": 100000,
-        "sliceSeconds": 63.438,
-        "sliceRowsPerSecond": 1576,
-        "overallSeconds": 409.96,
-        "overallRowsPerSecond": 2195
-      },
-      {
-        "rows": 1000000,
-        "sliceRows": 100000,
-        "sliceSeconds": 56.361,
-        "sliceRowsPerSecond": 1774,
-        "overallSeconds": 466.321,
-        "overallRowsPerSecond": 2144
-      }
-    ],
-    "path": "add_sessions_jsonl",
-    "start_index": 0
+    "rows": 0,
+    "elapsedSeconds": 0,
+    "rowsPerSecond": 0,
+    "checkpoints": [],
+    "path": "skipped (resume complete)",
+    "start_index": 1000000,
+    "write_engine_finalize": {
+      "enabled": false,
+      "note": "sharded write engine not enabled (set LONGMEM_WRITE_ENGINE=1 + LONGMEM_DATA_DIR)"
+    }
   },
   "gold_summary": [
     {
@@ -212,15 +137,16 @@
       "gold_size": 1441,
       "runs": 5,
       "latency_ms": {
-        "p50": 1288.09,
-        "p95": 11493.45,
+        "p50": 0.72,
+        "p95": 1.39,
         "all": [
-          14044.44,
-          1288.09,
-          1275.33,
-          1286.93,
-          1289.48
-        ]
+          1.44,
+          1.22,
+          0.72,
+          0.69,
+          0.53
+        ],
+        "cold_ms": 23158.49
       },
       "recall_at_10": {
         "capped": 0.9,
@@ -263,7 +189,28 @@
         "res-919994",
         "res-421347",
         "res-563299"
-      ]
+      ],
+      "typo_dict_cache": {
+        "expansion": {
+          "count": 0,
+          "mean_ms": null,
+          "p50_ms": null,
+          "p95_ms": null,
+          "p99_ms": null
+        },
+        "hit_rate": null,
+        "hits": 0,
+        "misses_cold": 0,
+        "misses_data_version_changed": 0,
+        "misses_mutations_changed": 0,
+        "rebuild": {
+          "count": 0,
+          "mean_ms": null,
+          "p50_ms": null,
+          "p95_ms": null,
+          "p99_ms": null
+        }
+      }
     },
     {
       "system": "rrf",
@@ -273,15 +220,16 @@
       "gold_size": 1166,
       "runs": 5,
       "latency_ms": {
-        "p50": 1293.44,
-        "p95": 10799.36,
+        "p50": 0.72,
+        "p95": 1.28,
         "all": [
-          13173.07,
-          1304.53,
-          1293.44,
-          1270.26,
-          1283.35
-        ]
+          1.38,
+          0.86,
+          0.69,
+          0.72,
+          0.64
+        ],
+        "cold_ms": 4326.23
       },
       "recall_at_10": {
         "capped": 0.3,
@@ -324,7 +272,28 @@
         "res-806771",
         "res-954233",
         "res-128729"
-      ]
+      ],
+      "typo_dict_cache": {
+        "expansion": {
+          "count": 0,
+          "mean_ms": null,
+          "p50_ms": null,
+          "p95_ms": null,
+          "p99_ms": null
+        },
+        "hit_rate": null,
+        "hits": 0,
+        "misses_cold": 0,
+        "misses_data_version_changed": 0,
+        "misses_mutations_changed": 0,
+        "rebuild": {
+          "count": 0,
+          "mean_ms": null,
+          "p50_ms": null,
+          "p95_ms": null,
+          "p99_ms": null
+        }
+      }
     },
     {
       "system": "rrf",
@@ -334,59 +303,80 @@
       "gold_size": 925,
       "runs": 5,
       "latency_ms": {
-        "p50": 1304.39,
-        "p95": 5235.06,
+        "p50": 0.82,
+        "p95": 1.28,
         "all": [
-          6213.79,
-          1294.96,
-          1304.39,
-          1320.16,
-          1284.83
-        ]
+          1.03,
+          0.82,
+          0.77,
+          1.34,
+          0.67
+        ],
+        "cold_ms": 8131.55
       },
       "recall_at_10": {
-        "capped": 0.6,
-        "raw": 0.006486486486486486,
-        "hits": 6
+        "capped": 0.9,
+        "raw": 0.00972972972972973,
+        "hits": 9
       },
       "recall_at_50": {
-        "capped": 0.44,
-        "raw": 0.023783783783783784,
-        "hits": 22
+        "capped": 0.76,
+        "raw": 0.04108108108108108,
+        "hits": 38
       },
       "recall_at_100": {
-        "capped": 0.34,
-        "raw": 0.036756756756756756,
-        "hits": 34
+        "capped": 0.5,
+        "raw": 0.05405405405405406,
+        "hits": 50
       },
-      "precision_at_10": 0.6,
-      "ndcg_at_10": 0.6496872770120411,
+      "precision_at_10": 0.9,
+      "ndcg_at_10": 0.9363792118010483,
       "gold_hits_by_lang": {
-        "ja": 33,
-        "en": 1
+        "ja": 50
       },
       "retrieved_top_20": [
+        "res-831158",
+        "res-527425",
+        "res-379712",
+        "res-90891",
+        "res-333760",
+        "res-393941",
+        "res-939901",
+        "res-206483",
+        "res-262342",
+        "res-183503",
+        "res-999498",
+        "res-722786",
+        "res-624601",
+        "res-397158",
+        "res-711668",
         "res-39185",
         "res-18235",
-        "res-90891",
-        "res-2049",
-        "res-831158",
-        "res-722786",
-        "res-527425",
-        "res-337416",
-        "res-32970",
-        "res-8399",
-        "res-1241",
-        "res-397158",
-        "res-1319",
-        "res-618385",
-        "res-1579",
-        "res-379712",
-        "res-183503",
-        "res-62677",
-        "res-339797",
-        "res-333760"
-      ]
+        "res-950818",
+        "res-220561",
+        "res-618385"
+      ],
+      "typo_dict_cache": {
+        "expansion": {
+          "count": 0,
+          "mean_ms": null,
+          "p50_ms": null,
+          "p95_ms": null,
+          "p99_ms": null
+        },
+        "hit_rate": null,
+        "hits": 0,
+        "misses_cold": 0,
+        "misses_data_version_changed": 0,
+        "misses_mutations_changed": 0,
+        "rebuild": {
+          "count": 0,
+          "mean_ms": null,
+          "p50_ms": null,
+          "p95_ms": null,
+          "p99_ms": null
+        }
+      }
     },
     {
       "system": "rrf",
@@ -396,15 +386,16 @@
       "gold_size": 1441,
       "runs": 5,
       "latency_ms": {
-        "p50": 1287.44,
-        "p95": 11359.12,
+        "p50": 0.46,
+        "p95": 1.16,
         "all": [
-          13874.43,
-          1287.44,
-          1281.06,
-          1281.78,
-          1297.87
-        ]
+          1.29,
+          0.62,
+          0.46,
+          0.42,
+          0.39
+        ],
+        "cold_ms": 5483.57
       },
       "recall_at_10": {
         "capped": 0.7,
@@ -412,9 +403,9 @@
         "hits": 7
       },
       "recall_at_50": {
-        "capped": 0.64,
-        "raw": 0.02220680083275503,
-        "hits": 32
+        "capped": 0.6,
+        "raw": 0.020818875780707843,
+        "hits": 30
       },
       "recall_at_100": {
         "capped": 0.34,
@@ -447,7 +438,258 @@
         "res-171340",
         "res-436373",
         "res-568609"
-      ]
+      ],
+      "typo_dict_cache": {
+        "expansion": {
+          "count": 0,
+          "mean_ms": null,
+          "p50_ms": null,
+          "p95_ms": null,
+          "p99_ms": null
+        },
+        "hit_rate": null,
+        "hits": 0,
+        "misses_cold": 0,
+        "misses_data_version_changed": 0,
+        "misses_mutations_changed": 0,
+        "rebuild": {
+          "count": 0,
+          "mean_ms": null,
+          "p50_ms": null,
+          "p95_ms": null,
+          "p99_ms": null
+        }
+      }
     }
-  ]
+  ],
+  "metrics": {
+    "after_ingest": {
+      "add": {
+        "count": 0,
+        "mean_ms": null,
+        "p50_ms": null,
+        "p95_ms": null,
+        "p99_ms": null
+      },
+      "add_many": {
+        "count": 0,
+        "mean_ms": null,
+        "p50_ms": null,
+        "p95_ms": null,
+        "p99_ms": null
+      },
+      "delete": {
+        "count": 0,
+        "mean_ms": null,
+        "p50_ms": null,
+        "p95_ms": null,
+        "p99_ms": null
+      },
+      "hybrid_search": {
+        "count": 0,
+        "mean_ms": null,
+        "p50_ms": null,
+        "p95_ms": null,
+        "p99_ms": null
+      },
+      "hybrid_search_rrf": {
+        "count": 0,
+        "mean_ms": null,
+        "p50_ms": null,
+        "p95_ms": null,
+        "p99_ms": null
+      },
+      "rag_cache_hit": {
+        "count": 0,
+        "mean_ms": null,
+        "p50_ms": null,
+        "p95_ms": null,
+        "p99_ms": null
+      },
+      "rag_candidate_retrieval": {
+        "count": 0,
+        "mean_ms": null,
+        "p50_ms": null,
+        "p95_ms": null,
+        "p99_ms": null
+      },
+      "rag_rrf_fusion": {
+        "count": 0,
+        "mean_ms": null,
+        "p50_ms": null,
+        "p95_ms": null,
+        "p99_ms": null
+      },
+      "rag_scoring": {
+        "count": 0,
+        "mean_ms": null,
+        "p50_ms": null,
+        "p95_ms": null,
+        "p99_ms": null
+      },
+      "set_embedding": {
+        "count": 0,
+        "mean_ms": null,
+        "p50_ms": null,
+        "p95_ms": null,
+        "p99_ms": null
+      },
+      "settings_cache": {
+        "hit_rate": null,
+        "hits": 0,
+        "misses_cold": 0,
+        "misses_data_version_changed": 0,
+        "misses_mutations_changed": 0,
+        "scan": {
+          "count": 0,
+          "mean_ms": null,
+          "p50_ms": null,
+          "p95_ms": null,
+          "p99_ms": null
+        }
+      },
+      "typo_dict_cache": {
+        "expansion": {
+          "count": 0,
+          "mean_ms": null,
+          "p50_ms": null,
+          "p95_ms": null,
+          "p99_ms": null
+        },
+        "hit_rate": null,
+        "hits": 0,
+        "misses_cold": 0,
+        "misses_data_version_changed": 0,
+        "misses_mutations_changed": 0,
+        "rebuild": {
+          "count": 0,
+          "mean_ms": null,
+          "p50_ms": null,
+          "p95_ms": null,
+          "p99_ms": null
+        }
+      },
+      "update": {
+        "count": 0,
+        "mean_ms": null,
+        "p50_ms": null,
+        "p95_ms": null,
+        "p99_ms": null
+      }
+    },
+    "final": {
+      "add": {
+        "count": 0,
+        "mean_ms": null,
+        "p50_ms": null,
+        "p95_ms": null,
+        "p99_ms": null
+      },
+      "add_many": {
+        "count": 0,
+        "mean_ms": null,
+        "p50_ms": null,
+        "p95_ms": null,
+        "p99_ms": null
+      },
+      "delete": {
+        "count": 0,
+        "mean_ms": null,
+        "p50_ms": null,
+        "p95_ms": null,
+        "p99_ms": null
+      },
+      "hybrid_search": {
+        "count": 0,
+        "mean_ms": null,
+        "p50_ms": null,
+        "p95_ms": null,
+        "p99_ms": null
+      },
+      "hybrid_search_rrf": {
+        "count": 24,
+        "mean_ms": 1535.1707916666667,
+        "p50_ms": 0.256,
+        "p95_ms": 16.384,
+        "p99_ms": 16.384
+      },
+      "rag_cache_hit": {
+        "count": 20,
+        "mean_ms": 0.474665,
+        "p50_ms": 0.256,
+        "p95_ms": 0.512,
+        "p99_ms": 0.512
+      },
+      "rag_candidate_retrieval": {
+        "count": 4,
+        "mean_ms": 4108.335725,
+        "p50_ms": 16.384,
+        "p95_ms": 16.384,
+        "p99_ms": 16.384
+      },
+      "rag_rrf_fusion": {
+        "count": 4,
+        "mean_ms": 34.609575,
+        "p50_ms": 8.192,
+        "p95_ms": 16.384,
+        "p99_ms": 16.384
+      },
+      "rag_scoring": {
+        "count": 0,
+        "mean_ms": null,
+        "p50_ms": null,
+        "p95_ms": null,
+        "p99_ms": null
+      },
+      "set_embedding": {
+        "count": 0,
+        "mean_ms": null,
+        "p50_ms": null,
+        "p95_ms": null,
+        "p99_ms": null
+      },
+      "settings_cache": {
+        "hit_rate": 0.9245283018867925,
+        "hits": 49,
+        "misses_cold": 4,
+        "misses_data_version_changed": 0,
+        "misses_mutations_changed": 0,
+        "scan": {
+          "count": 4,
+          "mean_ms": 4479.029175,
+          "p50_ms": 16.384,
+          "p95_ms": 16.384,
+          "p99_ms": 16.384
+        }
+      },
+      "typo_dict_cache": {
+        "expansion": {
+          "count": 0,
+          "mean_ms": null,
+          "p50_ms": null,
+          "p95_ms": null,
+          "p99_ms": null
+        },
+        "hit_rate": null,
+        "hits": 0,
+        "misses_cold": 0,
+        "misses_data_version_changed": 0,
+        "misses_mutations_changed": 0,
+        "rebuild": {
+          "count": 0,
+          "mean_ms": null,
+          "p50_ms": null,
+          "p95_ms": null,
+          "p99_ms": null
+        }
+      },
+      "update": {
+        "count": 0,
+        "mean_ms": null,
+        "p50_ms": null,
+        "p95_ms": null,
+        "p99_ms": null
+      }
+    }
+  }
 }

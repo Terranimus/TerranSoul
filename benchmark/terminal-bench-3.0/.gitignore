@@ -1,0 +1,32 @@
+# Terminal-Bench 3.0 dataset — DOWNLOADED TASK MATERIAL, DO NOT READ OR SEARCH
+#
+# `.dataset-probe/` holds the pinned upstream task set, which includes each
+# task's `solution/` and `tests/` directories. Reading, grepping, or otherwise
+# ingesting that material contaminates the benchmark and disqualifies any
+# number measured afterwards (`rules/bench-agi-purity.md` Rule 1.2 — the agent
+# seeding its own answer key is a real, measured incident in this repo).
+#
+# The dataset is Harbor's to read at run time. Nothing in this repo, and no
+# agent working in it, should open those files.
+.dataset-probe/
+
+# Local smoke-test artifacts (isolated brain, scratch grant dir, transcripts).
+.smoke/
+
+# Campaign job output.
+jobs/
+jobs-*/
+
+# Host-side MCP-proxy call logs: tool names, verdicts, caller identity, the
+# agent's own truncated QUERY text and the response SIZE/ROW COUNT. Never the
+# bearer token (mcp-auth-proxy.mjs forwards it, it never logs it), never a
+# lesson body, never response payload text. Runtime scratch, same rule as
+# jobs-*/ — and untracked is load-bearing here: the log now carries agent-
+# authored query text, so it stays host-side and out of the repo.
+proxy-logs/
+
+# Stack identity registry — start-bench-brain.mjs / start-bench-stack.mjs
+# record which pid holds which port against which data dir here, so a second
+# launch can tell "my instance" from "a stranger on the port that happens to
+# answer /health" (TBENCH-STACK-1, 2026-08-19). Runtime state, never source.
+.stack/
