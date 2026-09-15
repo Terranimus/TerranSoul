@@ -49,6 +49,10 @@ REPO="$(cd "$HERE/../.." && pwd)"
 POLL_S="${TB_UNTIL_DONE_POLL_S:-60}"
 GRACE_S="${TB_QUOTA_RESUME_GRACE_S:-180}"
 FALLBACK_S="${TB_QUOTA_FALLBACK_WAIT_S:-3600}"
+# The furthest a STRUCTURED reset may lie ahead and still be believed. The
+# account's longest window is seven_day, so 8 days bounds every real reset with
+# a day of margin; anything later is a misread, not a schedule.
+MAX_AHEAD_S="${TB_QUOTA_RESET_MAX_AHEAD_S:-691200}"
 MAX_WALLS="${TB_QUOTA_MAX_WALLS:-6}"
 START_GRACE_S="${TB_UNTIL_DONE_START_GRACE_S:-300}"
 TIGHT_LOOP_S="${TB_UNTIL_DONE_TIGHT_LOOP_S:-600}"
@@ -416,20 +420,45 @@ while :; do
     # STRUCTURED FIRST, then the free text, then the fallback below. The epoch
     # is absolute, so it needs none of the text parser's date guessing.
     target="$(_reset_epoch_structured_for_stamp "$stamp")"
+    past_epoch=""
+    # ⛔ AN UNBOUNDED EPOCH IS A PARK, NOT A SCHEDULE. Nothing capped the
+    # structured resetsAt, so a misread field (a milliseconds value that
+    # slipped the helper's guard, another clock's epoch) would sleep the sweep
+    # for as long as it said. Beyond MAX_AHEAD_S it is IGNORED, said so, and the
+    # free text and then the fallback decide.
+    if [ -n "$target" ] && [ "$target" -gt $(( now + MAX_AHEAD_S )) ]; then
+      say "IGNORING the structured reset $(date -d "@$target" '+%Y-%m-%d %H:%M:%S %Z'): $(( target - now ))s ahead, beyond the ${MAX_AHEAD_S}s (8-day) bound no account window exceeds — trying the free-text reset, then the fallback"
+      target=""
+    fi
+    # ⛔ AN EPOCH IN THE PAST IS NOT PROOF THE WINDOW CLEARED. It was clamped to
+    # "now" without reading the free text, which can name the window that
+    # actually stopped the sweep. So the free text is read FIRST, and the clamp
+    # applies only when it yields nothing usable. "Usable" excludes the text
+    # parser's roll-forward of the SAME reset -- a text time-of-day equal to the
+    # past epoch's (within 60 s) is that window, already cleared, and believing
+    # the roll would park the sweep 24 h for nothing.
+    if [ -n "$target" ] && [ "$target" -lt "$now" ]; then
+      past_epoch="$target"
+      target=""
+      say "the structured reset is already $(( now - past_epoch ))s in the past — reading the free-text reset before resuming"
+    fi
     if [ -n "$target" ]; then
       say "reset read from the tripping trial's last rate_limit_event (exhausted window): $(date -d "@$target" '+%Y-%m-%d %H:%M:%S %Z')"
-      # ⛔ NEVER SCHEDULE A RESET IN THE PAST. An epoch already behind the clock
-      # (the supervisor noticed late, or the window cleared during the halt) is
-      # a window that has ALREADY reset: resume after the grace alone. Unlike
-      # the text parser, it is never rolled forward a day -- the epoch carries
-      # its own date, and a roll would park the sweep 24 h for nothing.
-      if [ "$target" -lt "$now" ]; then
-        say "that reset is already $(( now - target ))s in the past — resuming after the grace only"
-        target="$now"
-      fi
     else
       target="$(_reset_epoch_for_stamp "$stamp")"
-      [ -n "$target" ] && say "reset read from the halted trial's free-text reset string (no exhausted window in a structured rate_limit_event)"
+      if [ -n "$target" ] && [ -n "$past_epoch" ]; then
+        _same=$(( (target - past_epoch) % 86400 ))
+        if [ "$_same" -le 60 ] || [ "$_same" -ge 86340 ]; then
+          say "the free-text reset $(date -d "@$target" '+%Y-%m-%d %H:%M:%S %Z') is the same past reset rolled forward a day — not used"
+          target=""
+        fi
+      fi
+      if [ -n "$target" ]; then
+        say "reset read from the halted trial's free-text reset string (no usable exhausted window in a structured rate_limit_event)"
+      elif [ -n "$past_epoch" ]; then
+        say "no usable free-text reset; that reset is already $(( now - past_epoch ))s in the past — resuming after the grace only"
+        target="$now"
+      fi
     fi
   fi
 

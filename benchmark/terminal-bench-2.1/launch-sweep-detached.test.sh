@@ -30,6 +30,16 @@ fi
 
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
+# ⛔ HERMETIC FIRST. Three refusal cases below run WITHOUT print-only, so a refusal that
+# regressed would Start-Process a real run-two-workers.sh (docker rm -f,
+# taskkill). The detached child inherits this PATH; that is not asserted.
+# hermetic-shims.sh puts logging shims for docker, netstat, ss and taskkill
+# FIRST on PATH, and the guard ABORTS unless every one resolves inside this
+# test's temp dir: on 2026-09-15 18:45 a real `docker rm -f` reached from
+# two-workers.test.sh SIGKILLed two live trials of another sweep.
+. "$HERE_T/hermetic-shims.sh" || { echo "ABORT: hermetic-shims.sh not found next to this test"; exit 2; }
+hermetic_shims "$TMP" || { echo "ABORT: could not create the hermetic shims"; exit 2; }
+hermetic_guard "$TMP" || exit 2
 TASKS="$TMP/tasks.txt"
 printf 'alpha\nbravo\ncharlie\n' > "$TASKS"
 TASKS_ABS="$(cd "$(dirname "$TASKS")" && pwd)/$(basename "$TASKS")"

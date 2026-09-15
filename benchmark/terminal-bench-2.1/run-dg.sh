@@ -1250,14 +1250,28 @@ sed "s|host.docker.internal:7425|host.docker.internal:$PROXY_PORT|" "$HERE/terra
 _reap_stale_containers() {
   local wanted="${TB_TASKS:-${TASK:-}}"
   if [ -z "$wanted" ]; then
-    # Whole-suite run (no -i): there is by definition no other worker to
-    # damage, so the original blanket reap is correct here.
-    docker ps -a --format '{{.Names}}' | grep -E 'env-main' \
+    # Whole-suite run (no -i). ⛔ EXITED ONLY. "There is no other worker to
+    # damage" is true of THIS launcher and false of the HOST: on 2026-09-15
+    # 18:45 an all-state `docker rm -f` of every trial container on the machine
+    # (the same shape, in run-two-workers.sh's halt path) SIGKILLed two live
+    # trials of a sweep the reaping process had nothing to do with. A
+    # whole-suite run cannot name its tasks, so it cannot prove any RUNNING
+    # container is its own; an EXITED one is nobody's running work -- the rule
+    # the host-headroom preflight above already follows. `created` is left
+    # alone as well: that is a container `compose up` is still starting.
+    docker ps -a --filter status=exited --format '{{.Names}}' | grep -E 'env-main' \
       | xargs -r docker rm -f >/dev/null 2>&1 || true
     return
   fi
-  local pat="" t
-  for t in $wanted; do pat="${pat:+$pat|}^${t}__"; done
+  # The task name is a FIXED STRING. Interpolated raw into the `grep -E`
+  # alternation below (which the network reap receives too), a `.` in a task
+  # name matched any character, so `a.b` would reap `axb__...`. The regex
+  # metacharacters are escaped first.
+  local pat="" t t_re
+  for t in $wanted; do
+    t_re="$(printf '%s' "$t" | sed 's#[][\.*^$+?(){}|]#\\&#g')"
+    pat="${pat:+$pat|}^${t_re}__"
+  done
   docker ps -a --format '{{.Names}}' | grep -E 'env-main' | grep -E "$pat" \
     | xargs -r docker rm -f >/dev/null 2>&1 || true
   _reap_stale_networks "$pat"

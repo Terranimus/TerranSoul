@@ -32,6 +32,16 @@ trap 'rm -rf "$SANDBOX"' EXIT
 mkdir -p "$SANDBOX/bin"
 ACTIONS="$SANDBOX/actions.log"
 
+# ⛔ HERMETIC FIRST. The block under test runs `docker rm -f` on the containers
+# `docker ps` lists; the fake docker below answers it per invocation.
+# hermetic-shims.sh puts logging shims for docker, netstat, ss and taskkill
+# FIRST on PATH, and the guard ABORTS unless every one resolves inside this
+# test's temp dir: on 2026-09-15 18:45 a real `docker rm -f` reached from
+# two-workers.test.sh SIGKILLed two live trials of another sweep.
+. "$HERE/hermetic-shims.sh" || { echo "ABORT: hermetic-shims.sh not found next to this test"; exit 2; }
+hermetic_shims "$SANDBOX" || { echo "ABORT: could not create the hermetic shims"; exit 2; }
+hermetic_guard "$SANDBOX" || exit 2
+
 # A fake docker whose `ps -a` returns a MIXED list: three harbor trial
 # containers (double underscore) and three of the owner's own (none). Every
 # `rm` is appended to the action log so the test can assert on exactly what

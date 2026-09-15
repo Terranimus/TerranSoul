@@ -32,6 +32,16 @@ echo "redo-identity-guard:"
 
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
+# ⛔ HERMETIC FIRST. redo-task.sh runs a snapshot of run-dg.sh (docker run, docker rm
+# -f) once past DRY=1; DRY is what stops it here, and these shims are what it
+# would reach if that ever regressed.
+# hermetic-shims.sh puts logging shims for docker, netstat, ss and taskkill
+# FIRST on PATH, and the guard ABORTS unless every one resolves inside this
+# test's temp dir: on 2026-09-15 18:45 a real `docker rm -f` reached from
+# two-workers.test.sh SIGKILLed two live trials of another sweep.
+. "$HERE/hermetic-shims.sh" || { echo "ABORT: hermetic-shims.sh not found next to this test"; exit 2; }
+hermetic_shims "$TMP" || { echo "ABORT: could not create the hermetic shims"; exit 2; }
+hermetic_guard "$TMP" || exit 2
 LAUNCH="$TMP/.tb-par0.launch"
 printf 'TB_AGENT=terransoul:TerranSoul TB_MODEL=claude-sonnet-5 TB_DATASET=terminal-bench/terminal-bench-2-1\n' > "$LAUNCH"
 

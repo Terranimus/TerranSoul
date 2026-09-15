@@ -39,6 +39,16 @@ TMP="$(mktemp -d)"
 # trap below removes them regardless of pass/fail.
 FAKE_TASK="launch-detached-selftest-$$"
 trap 'rm -rf "$TMP"; rm -f "$HERE_T"/detached-"$FAKE_TASK"-*.out "$HERE_T"/detached-"$FAKE_TASK"-*.err' EXIT
+# ⛔ HERMETIC FIRST. launch-detached.sh starts redo-task.sh -> run-dg.sh (docker)
+# unless TB_LAUNCH_DETACHED_CMD is honoured; the stub below is what normally
+# runs. The detached child inherits this PATH; that inheritance is not asserted.
+# hermetic-shims.sh puts logging shims for docker, netstat, ss and taskkill
+# FIRST on PATH, and the guard ABORTS unless every one resolves inside this
+# test's temp dir: on 2026-09-15 18:45 a real `docker rm -f` reached from
+# two-workers.test.sh SIGKILLed two live trials of another sweep.
+. "$HERE_T/hermetic-shims.sh" || { echo "ABORT: hermetic-shims.sh not found next to this test"; exit 2; }
+hermetic_shims "$TMP" || { echo "ABORT: could not create the hermetic shims"; exit 2; }
+hermetic_guard "$TMP" || exit 2
 
 # The stub stands in for redo-task.sh end-to-end: same calling convention
 # (task as $1, optional attempts as $2), the SAME "[redo] prefix : ..."

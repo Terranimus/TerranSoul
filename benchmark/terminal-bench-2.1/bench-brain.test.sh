@@ -36,6 +36,18 @@ echo "bench-token-abc" > "$SANDBOX/repo/mcp-data-tbench-clean/mcp-token.txt"
 printf '#!/usr/bin/env bash\nexit 0\n' > "$SANDBOX/repo/target-mcp/release/terransoul.exe"
 ACTIONS="$SANDBOX/actions.log"
 
+# ⛔ HERMETIC FIRST. stop-bench-brain.sh reads netstat and taskkills the pid it finds,
+# and cases 1-5 used to run before any netstat/taskkill fake existed here (they
+# were only written for case 6). The fakes this file writes into $SANDBOX/bin
+# still take precedence per invocation.
+# hermetic-shims.sh puts logging shims for docker, netstat, ss and taskkill
+# FIRST on PATH, and the guard ABORTS unless every one resolves inside this
+# test's temp dir: on 2026-09-15 18:45 a real `docker rm -f` reached from
+# two-workers.test.sh SIGKILLed two live trials of another sweep.
+. "$HERE/hermetic-shims.sh" || { echo "ABORT: hermetic-shims.sh not found next to this test"; exit 2; }
+hermetic_shims "$SANDBOX" || { echo "ABORT: could not create the hermetic shims"; exit 2; }
+hermetic_guard "$SANDBOX" || exit 2
+
 # $1 = memory_total on 7424, $2 = llm_provider_state on 7424,
 # $3 = memory_total on 7423 (or the literal DOWN), $4 = /mcp http code.
 make_curl() {

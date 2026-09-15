@@ -26,6 +26,17 @@ echo "shard-resume-guard:"
 
 # ── build a synthetic 6-task tree ────────────────────────────────────────────
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
+# ⛔ HERMETIC FIRST. run-parallel.sh is driven in DRY mode; without DRY it launches
+# run-sweep.par.sh workers (netstat, run-dg.sh -> docker) and kill -9s their pids.
+# hermetic-shims.sh puts logging shims for docker, netstat, ss and taskkill
+# FIRST on PATH, and the guard ABORTS unless every one resolves inside this
+# test's temp dir: on 2026-09-15 18:45 a real `docker rm -f` reached from
+# two-workers.test.sh SIGKILLed two live trials of another sweep.
+. "$HERE/hermetic-shims.sh" || { echo "ABORT: hermetic-shims.sh not found next to this test"; exit 2; }
+hermetic_shims "$TMP" || { echo "ABORT: could not create the hermetic shims"; exit 2; }
+hermetic_guard "$TMP" || exit 2
+# Not carried into the `declare -f` dump the driver call below embeds.
+unset -f hermetic_shims hermetic_guard
 mkdir -p "$TMP/tasks"
 for t in alpha bravo charlie delta echo foxtrot; do mkdir -p "$TMP/tasks/$t"; done
 

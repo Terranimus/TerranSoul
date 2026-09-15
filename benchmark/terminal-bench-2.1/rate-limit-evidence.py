@@ -62,9 +62,10 @@
 # ⛔ (a) AND (b) ARE MATCHED ONLY IN TEXT THE CLI WROTE. The transcript also holds
 # every tool result and every command the model typed, and a task about HTTP
 # services can print "rate limit reached" all day. So a line counts only when it
-# is a `result` / non-init `system` record, a synthetic API-error assistant
-# message, or a plain non-record line (stderr the CLI printed directly) -- never
-# a `user` (tool result) record or a fragment carrying tool markers. harbor's
+# is a `result` record, an API-error `system` record (CLI_API_ERROR_SUBTYPES), a
+# synthetic API-error assistant message, or a plain non-record line (stderr the
+# CLI printed directly) -- never a `user` (tool result) record, any other
+# `system` record, or a fragment carrying tool markers. harbor's
 # exception message embeds a head+tail copy of the same stdout, split by
 # " ... [N chars truncated] ... ", so each side of that marker is judged on its
 # own.
@@ -108,6 +109,20 @@ STREAM_LABEL = re.compile(r"^(stdout|stderr):\s*")
 TOOL_MARKERS = ('"tool_use_id"', '"tool_result"', '"tool_use_result"',
                 '"type":"user"', '"type":"tool_use"')
 KILLED_HEADER = re.compile(r"^Command failed \(exit 137\)")
+# ⛔ NOT "ANY NON-INIT SYSTEM RECORD". MEASURED 2026-09-15 over all 1,230
+# agent/claude-code.txt transcripts under jobs/: 142,056 `system` records in 12
+# subtypes -- thinking_tokens 128,091, task_started 5,078, task_notification
+# 5,060, background_tasks_changed 1,346, init 1,231, task_updated 771,
+# notification 287, vcs_state_changed 79, model_refusal_fallback 45, api_retry
+# 45, task_progress 22, permission_denied 1 -- and ZERO of them carry limit or
+# 429 wording. All 11 real quotas on disk are carried by `result` and
+# synthetic `assistant` records. Most subtypes hold free text the CLI did not
+# author as an API verdict (a background task's output, a hook's stdout, a
+# notification, a refusal explanation), so a `hook_response` or
+# `task_notification` echoing a stored lesson such as "hit your session limit"
+# would have been judged a spent account. `api_retry` is the one subtype whose
+# fields ARE the API's error (error_status, error).
+CLI_API_ERROR_SUBTYPES = frozenset({"api_retry"})
 
 
 # ── reading ─────────────────────────────────────────────────────────────────
@@ -256,7 +271,7 @@ def _cli_authored(part):
         if kind == "result":
             return True
         if kind == "system":
-            return rec.get("subtype") != "init"
+            return rec.get("subtype") in CLI_API_ERROR_SUBTYPES
         if kind == "assistant":
             msg = rec.get("message") if isinstance(rec.get("message"), dict) else {}
             return bool(rec.get("isApiErrorMessage") or rec.get("error")
@@ -270,6 +285,9 @@ def _cli_authored(part):
         return False
     if '"type":"assistant"' in part:
         return "<synthetic>" in part or "ApiErrorMessage" in part
+    # A truncated system record is held to the same subtype rule as a whole one.
+    if '"type":"system"' in part:
+        return any(f'"subtype":"{s}"' in part for s in CLI_API_ERROR_SUBTYPES)
     return True
 
 

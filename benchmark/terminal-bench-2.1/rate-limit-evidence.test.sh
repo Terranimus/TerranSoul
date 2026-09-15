@@ -240,6 +240,38 @@ MOUT2="$(TB_LAUNCH_REF="$SANDBOX/no-launch-file" TB_TASKS_EXPECTED=2 TB_QUARANTI
          bash "$HERE_T/merge-sweep.sh" "$JOBS" zz09w0 2>&1)"
 check "no ledger, no section" "0" "$(printf '%s' "$MOUT2" | grep -c 'REQUEUED after an external kill')"
 
+# ── 12. only the API-error system subtype is the CLI's verdict ──────────────
+echo "== 12. a system record echoing limit text is evidence only for api_retry =="
+# MEASURED 2026-09-15 over all 1,230 agent/claude-code.txt transcripts under
+# jobs/: 142,056 system records in 12 subtypes (thinking_tokens 128,091,
+# task_started 5,078, task_notification 5,060, background_tasks_changed 1,346,
+# init 1,231, task_updated 771, notification 287, vcs_state_changed 79,
+# model_refusal_fallback 45, api_retry 45, task_progress 22, permission_denied
+# 1) and ZERO with limit or 429 wording; the 11 real quotas are all carried by
+# result + synthetic assistant records. The judge accepted ANY non-init system
+# record, so a hook_response echoing a stored lesson read as a spent account.
+# FAILS ON af23a5a4: the hook case answers quota (0|...) and so is never
+# killed-with-work (1|); the truncated task_notification fragment answers quota.
+HK="$(mkjob hookecho)"
+cp "$K/t__x/result.json" "$HK/t__x/result.json"
+printf '%s\n' '{"type":"system","subtype":"init","cwd":"/app"}' "$EV_WARN_022" "$TEXT_TURN" \
+  '{"type":"system","subtype":"hook_response","hook_name":"SessionStart:startup","exit_code":0,"output":"[terransoul] lesson 26660: when you have hit your session limit, stop -- api_error_status: 429 means the account is spent"}' \
+  "$TOOL_OK" > "$HK/t__x/agent/claude-code.txt"
+check "a hook_response carrying limit and 429 text is not a quota" "1|" "$(judge quota "$HK")"
+check "... so the 18:45 kill under it is still killed-with-work" "0|t__x	16125 output tokens" "$(judge killed-with-work "$HK")"
+HF="$(mkjob hookfragment)"
+printf '%s' '{"exception_info":{"exception_type":"ApiRateLimitError","exception_message":"Command failed (exit 137): claude --print\nstdout: {\"type\":\"system\",\"subtype\":\"init\"} ... [9000 chars truncated] ... {\"type\":\"system\",\"subtype\":\"task_notification\",\"summary\":\"background job: You have hit your session limit - resets 4:50pm (UTC)\n\nstderr: None"},"agent_result":{"n_output_tokens":8100}}' > "$HF/t__x/result.json"
+printf '%s\n' "$EV_WARN_022" > "$HF/t__x/agent/claude-code.txt"
+check "a TRUNCATED non-API system record in the exception message is not a quota" "1|" "$(judge quota "$HF")"
+check "... and its kill is still recognised" "0|t__x	8100 output tokens" "$(judge killed-with-work "$HF")"
+# A GUARD (af23a5a4 answers the same): the one subtype whose fields ARE the
+# API's error still counts. Killed by emptying CLI_API_ERROR_SUBTYPES.
+AR="$(mkjob apiretry)"
+cp "$K/t__x/result.json" "$AR/t__x/result.json"
+printf '%s\n' "$EV_WARN_022" '{"type":"system","subtype":"api_retry","attempt":3,"max_retries":10,"retry_delay_ms":60000,"error_status":429,"error":"rate_limit_error: usage limit reached"}' > "$AR/t__x/agent/claude-code.txt"
+check "an api_retry record carrying the CLI's limit wording IS a quota" \
+  "0|t__x	CLI limit text 'usage limit' in claude-code.txt tail" "$(judge quota "$AR")"
+
 echo
 echo "  $pass passed, $fail failed"
 [ "$fail" -eq 0 ]

@@ -30,6 +30,18 @@ printf '[agent]\ntimeout_sec = 7200.0\n' > "$SANDBOX/tasks/bravo/task.toml"
 printf 'alpha\nbravo\n' > "$SANDBOX/tasks.txt"
 ACTIONS="$SANDBOX/actions.log"
 
+# ⛔ HERMETIC FIRST. preflight-sweep.sh runs `docker rm -f` on exited trial containers
+# and `docker run`, and reads netstat. The fakes below decide those answers per
+# case; these shims back them up so nothing this file runs can reach the real
+# binaries, including the ones no fake here covers (ss, taskkill).
+# hermetic-shims.sh puts logging shims for docker, netstat, ss and taskkill
+# FIRST on PATH, and the guard ABORTS unless every one resolves inside this
+# test's temp dir: on 2026-09-15 18:45 a real `docker rm -f` reached from
+# two-workers.test.sh SIGKILLed two live trials of another sweep.
+. "$HERE_T/hermetic-shims.sh" || { echo "ABORT: hermetic-shims.sh not found next to this test"; exit 2; }
+hermetic_shims "$SANDBOX" || { echo "ABORT: could not create the hermetic shims"; exit 2; }
+hermetic_guard "$SANDBOX" || exit 2
+
 # $1 = 7424 memory_total, $2 = 7424 llm_provider_state, $3 = 7423 memory_total
 make_curl() {
   cat > "$SANDBOX/bin/curl" <<EOF

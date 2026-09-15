@@ -45,6 +45,15 @@ ok()   { echo "  PASS  $1"; }
 bad()  { echo "  FAIL  $1"; fails=$((fails+1)); }
 
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
+# ⛔ HERMETIC FIRST. Cases 1-2 run the REAL run-dg.sh against the bench brain's port,
+# reaching `docker run` and the host-headroom `docker rm -f` with no fake.
+# hermetic-shims.sh puts logging shims for docker, netstat, ss and taskkill
+# FIRST on PATH, and the guard ABORTS unless every one resolves inside this
+# test's temp dir: on 2026-09-15 18:45 a real `docker rm -f` reached from
+# two-workers.test.sh SIGKILLed two live trials of another sweep.
+. "$HERE/hermetic-shims.sh" || { echo "ABORT: hermetic-shims.sh not found next to this test"; exit 2; }
+hermetic_shims "$TMP" || { echo "ABORT: could not create the hermetic shims"; exit 2; }
+hermetic_guard "$TMP" || exit 2
 
 live_token() {
   node -e '

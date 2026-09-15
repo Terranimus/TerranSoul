@@ -31,20 +31,21 @@ CALLS="$SANDBOX/calls.txt"
 HOOKS="$SANDBOX/hooks.txt"
 TB="$SANDBOX/benchmark/tb"
 
-# ⛔ HERMETIC SHIMS FOR THE THREE COMMANDS THAT REACH THE LIVE MACHINE. The halt
-# cases below make the REAL launcher run `_reap_sweep_containers`, which is
-# `docker rm -f` on every container whose name holds `__` -- every live harbor
-# trial on this host -- and `reclaim_port`, which kills an mcp-auth-proxy it
-# finds on :7425/:7426 when the (sandboxed) owner file names no live launcher.
-# Run next to a real sweep (a detached supervisor sleeps and relaunches on its
-# own), this test would tear down that sweep's containers and proxies. Empty
-# docker/netstat/ss make both see nothing, exactly as on an idle host.
-mkdir -p "$SANDBOX/bin"
-for tool in docker netstat ss; do
-  printf '#!/bin/sh\nexit 0\n' > "$SANDBOX/bin/$tool"
-  chmod +x "$SANDBOX/bin/$tool"
-done
-export PATH="$SANDBOX/bin:$PATH"
+# ⛔ HERMETIC SHIMS FOR THE FOUR COMMANDS THAT REACH THE LIVE MACHINE. The halt
+# cases below make the REAL launcher run `_reap_sweep_containers` (docker rm
+# -f), `_kill_worker_tree` (taskkill) and `reclaim_port` (netstat/ss, then a
+# kill). MEASURED 2026-09-15 18:45: this file, run beside the live ts09151819
+# sweep, removed that sweep's containers through the REAL docker and SIGKILLed
+# pytorch-model-cli (16,125 output tokens) and winning-avg-corewars (11,402).
+# It had docker/netstat/ss shims then, but taskkill went to the real binary and
+# nothing proved PATH resolved any of them before the first launch.
+# hermetic-shims.sh puts LOGGING shims first on PATH ($HERMETIC_LOG, one line
+# per call), and hermetic_guard ABORTS unless all four resolve inside this
+# sandbox. The taskkill shim still stops this test's OWN worker trees (a forced
+# kill of a descendant of this shell) and refuses any other pid.
+. "$HERE/hermetic-shims.sh" || { echo "ABORT: hermetic-shims.sh not found next to this test"; exit 2; }
+hermetic_shims "$SANDBOX" || { echo "ABORT: could not create the hermetic shims"; exit 2; }
+hermetic_guard "$SANDBOX" || exit 2
 
 # ⛔ THE STUB MUST CREATE A JOB DIR, because "did this task produce a new job
 # dir" is now how a PREFLIGHT REFUSAL is told apart from a task result. A stub
@@ -289,6 +290,44 @@ QREMAIN="$SANDBOX/benchmark/tb/jobs/ts$(grep -m1 -oE 'ts[0-9]{8}' "$SANDBOX/quot
 check "the merged .remaining holds both workers' unrun tasks, in order" "quota-task slow-a slow-b" \
   "$(tr '\n' ' ' < "$QREMAIN" 2>/dev/null | sed 's/ $//')"
 check "the bench brain is stopped on the halt path too" "1" "$(grep -c '^brain-stop' "$HOOKS")"
+
+echo "== the HALT-path reap removes ONLY this sweep's own containers =="
+# ⛔ MEASURED 2026-09-15 18:45 (see the shim block at the top): the reap was
+# `docker ps -a | grep '__' | docker rm -f`, which is every trial container on
+# the host, whoever launched it. The shimmed `docker ps -a` below holds this
+# sweep's own containers (one of them for `slow.b`, a task name with a regex
+# metacharacter), a foreign task's, a regex trap (`slowxb`), two prefix traps
+# (`x-quota-task`, `quota-task-extra`) and the owner's `richardle-mariadb-local`.
+# FAILS ON af23a5a4: the logged `docker rm -f` carried all seven `__` ids, so
+# the id check, the survivor check and the printed-names check all read wrong.
+: > "$CALLS"; : > "$HOOKS"; : > "$HERMETIC_LOG"
+rm -rf "$TB/jobs"
+cat > "$SANDBOX/reap-ps.txt" <<'ROWS'
+own0001 quota-task__abc1234__env-main-1 running
+own0002 slow.b__def5678__env-main-1 running
+frn0003 othertask__y7y7y7y__env-main-1 running
+frn0004 slowxb__q1q1q1q__env-main-1 running
+frn0005 x-quota-task__k2k2k2k__env-main-1 running
+frn0006 quota-task-extra__z3z3z3z__env-main-1 running
+own0007 quota-task__old0000__verifier__trial-main-1 exited
+usr0008 richardle-mariadb-local exited
+ROWS
+printf 'quota-task slow.b\n' > "$SANDBOX/reap.txt"
+sweep "$SANDBOX/reap.txt" STUB_QUOTA_TASK=quota-task STUB_SLOW_S=25 TB_SIBLING_GRACE_S=2 \
+      HERMETIC_DOCKER_PS="$SANDBOX/reap-ps.txt" >"$SANDBOX/reap.log" 2>&1
+check "the reap case halts on quota" "3" "$?"
+check "exactly one docker rm call" "1" "$(grep -c '^docker rm ' "$HERMETIC_LOG")"
+check "docker rm -f carries ONLY this sweep's own ids ('.' in a task name is literal)" \
+  "own0001 own0002 own0007" \
+  "$(grep '^docker rm ' "$HERMETIC_LOG" | tr ' ' '\n' | grep -E '^[a-z]{3}[0-9]{4}$' | sort | tr '\n' ' ' | sed 's/ $//')"
+check "the foreign, regex-trap, prefix-trap and owner containers are all still there" \
+  "frn0003 frn0004 frn0005 frn0006 usr0008" \
+  "$(awk '{print $1}' "$SANDBOX/reap-ps.txt" | sort | tr '\n' ' ' | sed 's/ $//')"
+check "the reaped names are printed before removal, and only they" "3 0" \
+  "$(grep -c '^\[sweep\]   own000' "$SANDBOX/reap.log") $(grep -cE '^\[sweep\]   (frn|usr)0' "$SANDBOX/reap.log")"
+# A GUARD on the shim itself: the sibling kill went through the shim and it
+# never had to refuse a pid, i.e. the launcher only ever targeted its own tree.
+check "the sibling kill reached only this test's own processes" "0" "$(grep -c 'REFUSED' "$HERMETIC_LOG")"
 
 echo "== the run-dg env matches redo-task.sh =="
 # ⛔ THE SWEEP MUST BE THE SAME HARNESS AS THE REDO. The last five sam-cell-seg
@@ -770,6 +809,59 @@ printf 'old-task\told__t\tj0\t9 output tokens\n' > "$JOBS_ROOT/$P1.requeued"
 _merge_requeued 2>/dev/null
 check "inherited and new requeues, each once" "old-task kill-me" \
   "$(cut -f1 "$JOBS_ROOT/ts09159999.requeued" 2>/dev/null | tr '\n' ' ' | sed 's/ $//')"
+
+echo "== with the task lists UNKNOWN, the reap removes NOTHING =="
+# FAILS ON af23a5a4: the old body never consulted the lists -- it removed every
+# `__` container, i.e. both rows below.
+source <(sed -n '/^_reap_sweep_containers() {/,/^}/p' "$HERE/run-two-workers.sh" | tr -d '\r')
+printf 'aaa0001 alpha__x__env-main-1 running\nbbb0002 beta__y__env-main-1 exited\n' > "$SANDBOX/unknown-ps.txt"
+: > "$HERMETIC_LOG"
+uout="$( export HERMETIC_DOCKER_PS="$SANDBOX/unknown-ps.txt"; W0=(); W1=(); _reap_sweep_containers 2>&1 )"
+check "no docker rm when the task lists are unknown" "0" "$(grep -c '^docker rm ' "$HERMETIC_LOG")"
+check "the skipped reap says why" "1" "$(printf '%s\n' "$uout" | grep -c 'reap SKIPPED')"
+
+echo "== a killed-with-work JUDGE ERROR fails safe to the launcher's own reading =="
+# ⛔ FAILS ON af23a5a4: job_was_killed_with_work returned the helper's exit 3 as
+# its own status, which the worker reads as "not killed" -- so the 18:45 kill
+# shape, judged by a helper that broke, fell through and was banked as a 0.
+source <(sed -n '/^job_was_killed_with_work() {/,/^}/p' "$HERE/run-two-workers.sh")
+BROKEN="$SANDBOX/broken-judge.py"
+printf 'import sys\nsys.exit(3)\n' > "$BROKEN"
+kout="$( RATE_LIMIT_EVIDENCE="$BROKEN"; job_was_killed_with_work "$KJOB" 2>"$SANDBOX/kerr.txt" )"; krc=$?
+check "judge exit 3 + the 18:45 shape (137, ApiRateLimitError, 16125 tokens) IS killed-with-work" "0" "$krc"
+check "... with the launcher's own reading as its evidence" \
+  "t__x	16125 output tokens (launcher reading; the judge could not answer)" "$kout"
+check "... and the judge error is logged" "1" "$(grep -c 'killed-with-work judge error' "$SANDBOX/kerr.txt")"
+# GUARDS (they pass on af23a5a4 too, where every judge error read as "no"): the
+# fallback must not widen the case. Each is killed by dropping one of the three
+# field checks from the launcher's reading.
+Z137="$SANDBOX/judgeerr-zero"; mkdir -p "$Z137/t__x"
+printf '%s' '{"exception_info":{"exception_type":"ApiRateLimitError","exception_message":"Command failed (exit 137): claude --print"},"agent_result":{"n_output_tokens":0}}' > "$Z137/t__x/result.json"
+( RATE_LIMIT_EVIDENCE="$BROKEN"; job_was_killed_with_work "$Z137" >/dev/null 2>&1 ) && k=1 || k=0
+check "judge error + zero output tokens falls through" "0" "$k"
+E1J="$SANDBOX/judgeerr-exit1"; mkdir -p "$E1J/t__x"
+printf '%s' '{"exception_info":{"exception_type":"ApiRateLimitError","exception_message":"Command failed (exit 1): claude --print"},"agent_result":{"n_output_tokens":9000}}' > "$E1J/t__x/result.json"
+( RATE_LIMIT_EVIDENCE="$BROKEN"; job_was_killed_with_work "$E1J" >/dev/null 2>&1 ) && k=1 || k=0
+check "judge error + an exit-1 failure falls through" "0" "$k"
+N137="$SANDBOX/judgeerr-label"; mkdir -p "$N137/t__x"
+printf '%s' '{"exception_info":{"exception_type":"NonZeroAgentExitCodeError","exception_message":"Command failed (exit 137): claude --print"},"agent_result":{"n_output_tokens":500}}' > "$N137/t__x/result.json"
+( RATE_LIMIT_EVIDENCE="$BROKEN"; job_was_killed_with_work "$N137" >/dev/null 2>&1 ) && k=1 || k=0
+check "judge error + another exception label falls through" "0" "$k"
+
+echo "== the hermetic ABORT GUARD fires when a shim is absent =="
+# A GUARD, not new-vs-old: hermetic-shims.sh is new, so these pass against
+# af23a5a4's scripts by construction; they are proven red by mutation instead
+# (a hermetic_guard that returns 0 unconditionally turns the first three red).
+OUTSIDE="$(mktemp -d)"
+printf '#!/bin/sh\nexit 0\n' > "$OUTSIDE/docker"; chmod +x "$OUTSIDE/docker"
+gout="$( PATH="$OUTSIDE:/usr/bin:/bin"; hermetic_guard "$SANDBOX" docker 2>&1 )"; grc=$?
+check "a docker OUTSIDE the sandbox aborts with exit 2" "2" "$grc"
+check "... and names what it resolved to" "1" "$(printf '%s\n' "$gout" | grep -cF "ABORT: 'docker' resolves to '$OUTSIDE/docker'")"
+gout="$( PATH="/usr/bin:/bin"; hermetic_guard "$SANDBOX" taskkill 2>&1 )"; grc=$?
+check "a taskkill that resolves to nothing aborts with exit 2" "2" "$grc"
+check "the guard at the top saw all four shims inside the sandbox" "4" \
+  "$(for t in docker netstat ss taskkill; do command -v "$t"; done | grep -cF "$SANDBOX/hermetic-bin/")"
+rm -rf "$OUTSIDE"
 
 echo
 if [ "$fails" -eq 0 ]; then echo "two-workers.test.sh: ALL PASS"; else echo "two-workers.test.sh: $fails FAILURE(S)"; fi

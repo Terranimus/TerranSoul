@@ -29,6 +29,16 @@ no() { echo "  FAIL $1 :: $2"; fail=$((fail+1)); }
 SANDBOX="$(mktemp -d)"
 trap 'rm -rf "$SANDBOX"' EXIT
 mkdir -p "$SANDBOX/bin"
+# ⛔ HERMETIC FIRST. This file runs the REAL run-dg.sh, which past the network probe
+# reaches the host-headroom `docker rm -f` and the container reap; the fake
+# docker below only answers the probe.
+# hermetic-shims.sh puts logging shims for docker, netstat, ss and taskkill
+# FIRST on PATH, and the guard ABORTS unless every one resolves inside this
+# test's temp dir: on 2026-09-15 18:45 a real `docker rm -f` reached from
+# two-workers.test.sh SIGKILLed two live trials of another sweep.
+. "$HERE/hermetic-shims.sh" || { echo "ABORT: hermetic-shims.sh not found next to this test"; exit 2; }
+hermetic_shims "$SANDBOX" || { echo "ABORT: could not create the hermetic shims"; exit 2; }
+hermetic_guard "$SANDBOX" || exit 2
 
 # $1 = what the fake docker prints for the probe ("" = print nothing, exit 1)
 make_docker() {

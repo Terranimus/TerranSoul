@@ -21,6 +21,16 @@ fails=0
 ok()  { echo "  PASS  $1"; }
 bad() { echo "  FAIL  $1"; fails=$((fails+1)); }
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"; [ -n "${SRV:-}" ] && kill "$SRV" 2>/dev/null' EXIT
+# ⛔ HERMETIC FIRST. Every case runs the REAL run-dg.sh (TB_PREFLIGHT_ONLY=1), whose
+# preflights run `docker run` and the host-headroom `docker rm -f` before the
+# warmth gate this file is about -- with no fake docker at all.
+# hermetic-shims.sh puts logging shims for docker, netstat, ss and taskkill
+# FIRST on PATH, and the guard ABORTS unless every one resolves inside this
+# test's temp dir: on 2026-09-15 18:45 a real `docker rm -f` reached from
+# two-workers.test.sh SIGKILLed two live trials of another sweep.
+. "$HERE/hermetic-shims.sh" || { echo "ABORT: hermetic-shims.sh not found next to this test"; exit 2; }
+hermetic_shims "$TMP" || { echo "ABORT: could not create the hermetic shims"; exit 2; }
+hermetic_guard "$TMP" || exit 2
 
 PORT="${TB_TEST_PORT:-7433}"
 start_fake_brain() {

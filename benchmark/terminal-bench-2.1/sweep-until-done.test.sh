@@ -34,6 +34,18 @@ cp "$SUT_SRC" "$TB/sweep-until-done.sh"
 cp "$HERE_T/rate-limit-evidence.py" "$TB/"
 SUT="$TB/sweep-until-done.sh"
 
+# ⛔ HERMETIC FIRST. sweep-until-done.sh launches $TB_UNTIL_DONE_LAUNCH_CMD, whose
+# production default is launch-sweep-detached.sh -> run-two-workers.sh, and
+# that launcher's halt path runs docker rm -f and taskkill. The stub below
+# replaces it; if the override were ever ignored, these shims are what the
+# launch would reach. hermetic-shims.sh puts logging shims for docker, netstat,
+# ss and taskkill FIRST on PATH, and the guard ABORTS unless every one resolves
+# inside this sandbox (a test's real docker rm -f killed two live trials on
+# 2026-09-15 18:45).
+. "$HERE_T/hermetic-shims.sh" || { echo "ABORT: hermetic-shims.sh not found next to this test"; exit 2; }
+hermetic_shims "$SANDBOX" || { echo "ABORT: could not create the hermetic shims"; exit 2; }
+hermetic_guard "$SANDBOX" || exit 2
+
 # 2026-09-14 17:08:39 UTC — the real halt happened minutes after this, and every
 # expected epoch below is reconstructed from an ABSOLUTE date string rather than
 # by re-running the script's own "today + rollover" arithmetic.
@@ -319,6 +331,56 @@ check "the free-text sweep completes" "0" "$?"
 check "sleeps to the free-text reset + grace" "$(( WANT_450PM + 180 - NOW ))" "$(sed -n 1p "$SLEEPS")"
 grep -q "reset read from the halted trial's free-text reset string" "$SANDBOX/f3.log" \
   && ok "the log names the free-text source" || no "the log names the free-text source" "$(grep until-done "$SANDBOX/f3.log" | tail -8)"
+
+echo "== (f4) a PAST structured reset reads the free text before clamping =="
+# FAILS ON af23a5a4: the past epoch was clamped to now without reading the free
+# text, so the sweep slept the 180 s grace alone and relaunched into a window
+# the account's own words say resets at 4:50pm UTC (85,461 s away).
+printf '09160400 quota 2\n09161000 done 0\n' > "$PLAN"
+STUB_RESET_TEXT="You've hit your session limit · resets 4:50pm (UTC)" \
+STUB_RATE_EVENT="$(ev_rejected $(( NOW - 7200 )))" run_supervisor "$TASKS" > "$SANDBOX/f4.log" 2>&1
+check "the past-structured sweep completes" "0" "$?"
+check "sleeps to the free-text reset + grace, not the grace alone" "$(( WANT_450PM + 180 - NOW ))" "$(sed -n 1p "$SLEEPS")"
+grep -q "reading the free-text reset before resuming" "$SANDBOX/f4.log" \
+  && ok "the log says the past epoch sent it to the free text" \
+  || no "the log says the past epoch sent it to the free text" "$(grep until-done "$SANDBOX/f4.log" | tail -8)"
+
+echo "== (f4b) ... but the SAME past reset rolled a day forward is not believed =="
+# A GUARD (af23a5a4 also answers 180 here, by clamping without looking).
+# 1789404600 is 2026-09-14 16:50 UTC, 1,119 s before NOW, and "resets 4:50pm
+# (UTC)" is that same reset, which the text parser rolls to tomorrow. Believing
+# the roll parks the sweep ~23.7 h for a window that already cleared. Killed by
+# deleting the same-window check in sweep-until-done.sh.
+printf '09160500 quota 2\n09161100 done 0\n' > "$PLAN"
+STUB_RESET_TEXT="You've hit your session limit · resets 4:50pm (UTC)" \
+STUB_RATE_EVENT="$(ev_rejected 1789404600)" run_supervisor "$TASKS" > "$SANDBOX/f4b.log" 2>&1
+check "the same-window sweep completes" "0" "$?"
+check "the wait is the grace only" "180" "$(sed -n 1p "$SLEEPS")"
+
+echo "== (f5) a structured reset beyond 8 days is IGNORED; the free text decides =="
+# FAILS ON af23a5a4: nothing bounded the epoch, so the sweep slept 30 days.
+printf '09160600 quota 2\n09161200 done 0\n' > "$PLAN"
+STUB_RESET_TEXT="You've hit your session limit · resets 4:50pm (UTC)" \
+STUB_RATE_EVENT="$(ev_rejected $(( NOW + 30*86400 )))" run_supervisor "$TASKS" > "$SANDBOX/f5.log" 2>&1
+check "the far-future sweep completes" "0" "$?"
+check "sleeps to the free-text reset + grace, not 30 days" "$(( WANT_450PM + 180 - NOW ))" "$(sed -n 1p "$SLEEPS")"
+grep -q "IGNORING the structured reset" "$SANDBOX/f5.log" \
+  && ok "the ignored epoch is announced" || no "the ignored epoch is announced" "$(grep until-done "$SANDBOX/f5.log" | tail -8)"
+
+echo "== (f6) ... and with no free text, the 3600 s fallback =="
+# FAILS ON af23a5a4 for the same reason: 30 days + grace instead of 3,780 s.
+printf '09160700 quota 2\n09161300 done 0\n' > "$PLAN"
+STUB_RATE_EVENT="$(ev_rejected $(( NOW + 30*86400 )))" run_supervisor "$TASKS" > "$SANDBOX/f6.log" 2>&1
+check "the far-future, no-text sweep completes" "0" "$?"
+check "waits the fallback + grace" "3780" "$(sed -n 1p "$SLEEPS")"
+
+echo "== (f7) a real seven_day reset 7 days out is still believed =="
+# A GUARD (af23a5a4 believes it too): the bound must not be tighter than the
+# account's own longest window. Killed by an 86,400 s bound.
+printf '09160800 quota 2\n09161400 done 0\n' > "$PLAN"
+STUB_RATE_EVENT="$(ev_rejected "$R_FUT" 1.0 $(( NOW + 7*86400 )))" run_supervisor "$TASKS" > "$SANDBOX/f7.log" 2>&1
+check "the seven-day sweep completes" "0" "$?"
+check "sleeps to the seven_day reset + grace" "$(( 7*86400 + 180 ))" "$(sed -n 1p "$SLEEPS")"
 
 # ── refusals ─────────────────────────────────────────────────────────────────
 echo "== refusals =="

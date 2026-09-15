@@ -31,6 +31,20 @@ check() { if [ "$2" = "$3" ]; then echo "  ok   $1"; else echo "  FAIL $1: expec
 
 RUN_DG="$HERE/run-dg.sh"
 
+SANDBOX="$(mktemp -d)"
+trap 'rm -rf "$SANDBOX"' EXIT
+# ⛔ HERMETIC FIRST. Cases 2 and 3 run the REAL run-dg.sh with TB_STOP_HOOK=0 and no
+# fake of any kind: with the bench brain up they get past the brain check to
+# the container network probe (`docker run`) and the host-headroom `docker rm
+# -f` before the empty task list stops them.
+# hermetic-shims.sh puts logging shims for docker, netstat, ss and taskkill
+# FIRST on PATH, and the guard ABORTS unless every one resolves inside this
+# test's temp dir: on 2026-09-15 18:45 a real `docker rm -f` reached from
+# two-workers.test.sh SIGKILLed two live trials of another sweep.
+. "$HERE/hermetic-shims.sh" || { echo "ABORT: hermetic-shims.sh not found next to this test"; exit 2; }
+hermetic_shims "$SANDBOX" || { echo "ABORT: could not create the hermetic shims"; exit 2; }
+hermetic_guard "$SANDBOX" || exit 2
+
 echo "== the converse guard exists and refuses an unset TB_STOP_HOOK =="
 # A REAL task name, so the empty-task guard cannot fire instead and make this
 # look like it passed. The enforcement guard must be early enough to refuse

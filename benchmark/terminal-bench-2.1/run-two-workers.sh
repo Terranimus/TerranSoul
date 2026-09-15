@@ -524,11 +524,50 @@ sys.exit(1)
 # the same three sources, in the same order, as merge-sweep.sh's
 # trial_agent_produced_work, so the sweep and the merge cannot disagree about
 # whether this trial ran.
+#
+# ⛔ A JUDGE THAT CANNOT ANSWER IS NOT A "NO". The helper exits 3 when it breaks
+# on an unexpected shape (2 when python cannot open it), and this function used
+# to return that code as-is -- which the worker reads as "not killed", so a
+# mid-work kill the judge could not parse fell through to the checks below and
+# was BANKED as a measured 0 (job_hit_quota fails safe in the same situation;
+# this one did not). On a judge error the launcher reads result.json itself and
+# treats the trial as killed-with-work only when all three defining fields are
+# there: exception_type ApiRateLimitError, a "Command failed (exit 137)"
+# message, and n_output_tokens > 0. Anything less falls through as before.
 job_was_killed_with_work() {
-  local job_dir="$1" helper
+  local job_dir="$1" helper out rc
   [ -n "$job_dir" ] && [ -d "$job_dir" ] || return 1
   helper="${RATE_LIMIT_EVIDENCE:-$HERE/rate-limit-evidence.py}"
-  python "$helper" killed-with-work "$job_dir" 2>/dev/null
+  out="$(python "$helper" killed-with-work "$job_dir" 2>/dev/null)"
+  rc=$?
+  case "$rc" in
+    0) printf '%s\n' "$out"; return 0 ;;
+    1) return 1 ;;
+  esac
+  echo "[2w] killed-with-work judge error: rate-limit-evidence.py exit $rc on $job_dir -- reading result.json directly" >&2
+  python -c "
+import json,glob,os,sys
+for p in sorted(glob.glob(os.path.join(sys.argv[1],'*','result.json'))):
+    try:
+        d=json.load(open(p))
+    except Exception:
+        continue
+    if not isinstance(d,dict):
+        continue
+    info=d.get('exception_info')
+    agent=d.get('agent_result')
+    if not isinstance(info,dict) or not isinstance(agent,dict):
+        continue
+    msg=info.get('exception_message')
+    tok=agent.get('n_output_tokens')
+    if info.get('exception_type')!='ApiRateLimitError' or not isinstance(msg,str) or 'Command failed (exit 137)' not in msg:
+        continue
+    if isinstance(tok,bool) or not isinstance(tok,(int,float)) or tok<=0:
+        continue
+    print('%s\t%d output tokens (launcher reading; the judge could not answer)' % (os.path.basename(os.path.dirname(p)), int(tok)))
+    sys.exit(0)
+sys.exit(1)
+" "$job_dir" 2>/dev/null
 }
 
 # ── THE ONE-REQUEUE MARKER, WHICH MUST OUTLIVE A RELAUNCH ────────────────────
@@ -1017,14 +1056,15 @@ run_worker() {
 # (TBENCH-TEARDOWN-REAP-1 in terransoul_hook.py) only fires when ITS teardown
 # command fails, not when the process is killed out from under it. So teardown
 # here is EXPLICIT: taskkill the tree (politely first, then forced), then remove
-# the trial containers directly.
+# THIS SWEEP'S OWN trial containers directly (_reap_sweep_containers).
 #
-# ⛔ THE `__` IS THE SAFETY PROPERTY. Every harbor trial container carries the
-# trial session id, which always contains a DOUBLE underscore; none of the
-# owner's own long-lived containers (`tl-mariadb-test`,
-# `richardle-mariadb-local`, `shopee-crawler-mariadb-local`) do. A blunt sweep
-# by status killed two LIVE trials on 2026-09-07 and would delete the owner's
-# data here.
+# ⛔ `__` IS NOT OWNERSHIP. Every harbor trial container carries the trial
+# session id, which contains a DOUBLE underscore, and none of the owner's own
+# long-lived containers (`tl-mariadb-test`, `richardle-mariadb-local`,
+# `shopee-crawler-mariadb-local`) do -- so `__` tells a trial container from
+# the owner's data. It does not tell THIS sweep's trials from another
+# launcher's, and reaping on it alone killed two live trials on 2026-09-15.
+# A blunt sweep by status killed two LIVE trials on 2026-09-07.
 _kill_worker_tree() { # <msys pid> <label>
   local pid="$1" label="$2" win i
   [ -n "$pid" ] || return 0
@@ -1048,12 +1088,45 @@ _kill_worker_tree() { # <msys pid> <label>
   return 0
 }
 
+# ⛔ SCOPED TO THIS SWEEP'S OWN TASKS. MEASURED 2026-09-15 18:45: a reviewer
+# ran two-workers.test.sh beside the live ts09151819 sweep, its halt case
+# reached this function, and the old body -- `docker rm -f` on every container
+# whose name held `__` -- SIGKILLed two LIVE trials of that other sweep:
+# pytorch-model-cli (16,125 output tokens) and winning-avg-corewars (11,402).
+# Every harbor trial on the host carries `__`, whoever launched it.
+#
+# A harbor container is named `<task>__<trialid>__<service>`, so ownership is
+# the `<task>__` PREFIX for a task in either worker's list -- the scoping
+# run-dg.sh's _reap_stale_containers already uses. All states are removed
+# because this is the halt path: the workers that own these trials were just
+# killed, so their containers are orphans by construction.
+#
+# The prefix is matched as a FIXED STRING (the task is quoted inside the `case`
+# pattern), never as a regex: a `.` in a task name must not match any
+# character, and `x-<task>__` or `<task>-extra__` are other tasks. If the task
+# lists are unknown, NOTHING is reaped and the reason is printed -- the blanket
+# reap is the defect, so it is never the fallback.
 _reap_sweep_containers() {
   command -v docker >/dev/null 2>&1 || return 0
-  local dead
-  dead="$(docker ps -a --format '{{.ID}} {{.Names}}' 2>/dev/null | grep '__' || true)"
-  [ -n "$dead" ] || { echo "[sweep] no trial containers left to reap"; return 0; }
-  echo "[sweep] reaping $(printf '%s\n' "$dead" | wc -l | tr -d ' ') trial container(s):"
+  local rows dead="" id name t
+  local owned=(${W0[@]+"${W0[@]}"} ${W1[@]+"${W1[@]}"})
+  if [ "${#owned[@]}" -eq 0 ]; then
+    echo "[sweep] reap SKIPPED: this sweep's task lists are unknown, so no container can be proven ours -- reaping NOTHING (never the host-wide '__' reap that killed two live trials on 2026-09-15)"
+    return 0
+  fi
+  rows="$(docker ps -a --format '{{.ID}} {{.Names}}' 2>/dev/null || true)"
+  while read -r id name; do
+    [ -n "$id" ] && [ -n "$name" ] || continue
+    for t in "${owned[@]}"; do
+      [ -n "$t" ] || continue
+      case "$name" in
+        "${t}__"*) dead="${dead}${id} ${name}"$'\n'; break ;;
+      esac
+    done
+  done <<< "$rows"
+  dead="${dead%$'\n'}"
+  [ -n "$dead" ] || { echo "[sweep] no containers of this sweep's ${#owned[@]} task(s) left to reap"; return 0; }
+  echo "[sweep] reaping $(printf '%s\n' "$dead" | wc -l | tr -d ' ') container(s) of this sweep's own tasks:"
   printf '%s\n' "$dead" | sed 's/^/[sweep]   /'
   # shellcheck disable=SC2046
   docker rm -f $(printf '%s\n' "$dead" | awk '{print $1}') >/dev/null 2>&1 || true
