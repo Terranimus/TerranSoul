@@ -234,6 +234,62 @@ test('the baseline is the most recent SOUND pass, not the most recent trial', ()
   rmSync(box, { recursive: true, force: true })
 })
 
+test('a reward-1 trial that ended in AgentTimeoutError is never the baseline — the campaign scores it 0', () => {
+  // ⛔ FAILS ON THE PRE-CHANGE TREE. `findBaseline` took any trial whose
+  // reward.txt was > 0 and that `runWasSound` called a fair run — and
+  // `runWasSound` returns true on `reward > 0` whatever the exception says.
+  // The campaign's own rule, `outcomeOf` in trial-outcome.mjs, counts an
+  // errored trial as 0. So the "passing baseline" could be a trial the
+  // campaign scores as a FAILURE, and `regressed_vs_baseline` then accused a
+  // failure of regressing against another failure. Measured: the baseline for
+  // a real task in this campaign had reward 1 and AgentTimeoutError. Pre-change
+  // this picks `__timeoutpass` (newer than the clean pass) in the first half,
+  // and returns it instead of null in the second.
+  const box = tmp()
+  const jobs = join(box, 'jobs')
+  const task = 'demo-task'
+  const timedOut = {
+    exception_type: 'AgentTimeoutError',
+    exception_message: 'Agent execution timed out after 3600.0 seconds',
+  }
+
+  makeTrial({
+    root: jobs,
+    job: 'clean-pass',
+    task,
+    trial: `${task}__cleanpass`,
+    reward: '1',
+    result: { started_at: '2026-09-01T00:00:00Z' },
+  })
+  makeTrial({
+    root: jobs,
+    job: 'timeout-pass',
+    task,
+    trial: `${task}__timeoutpass`,
+    reward: '1',
+    result: { started_at: '2026-09-08T00:00:00Z', exception_info: timedOut },
+  })
+  const current = makeTrial({
+    root: jobs,
+    job: 'current',
+    task,
+    trial: `${task}__current`,
+    reward: '0',
+    result: { started_at: '2026-09-10T00:00:00Z' },
+  })
+
+  const r = forensicsForTrial(current, { write: false, index: false })
+  assert.equal(r.baseline?.trial, `${task}__cleanpass`, 'the newer timed-out "pass" is a campaign failure')
+
+  // With ONLY the timed-out trial on disk there is no passing baseline at all,
+  // so nothing may be reported as a regression against one.
+  rmSync(join(jobs, 'clean-pass'), { recursive: true, force: true })
+  const alone = forensicsForTrial(current, { write: false, index: false })
+  assert.equal(alone.baseline, null)
+  assert.ok(!alone.suspects.some((s) => s.rule === 'regressed_vs_baseline'))
+  rmSync(box, { recursive: true, force: true })
+})
+
 test('a diffstat counts real lines, not the trailing newline', () => {
   // FAILS if `split('\n')` is counted as-is: 'z\n' would read as two lines,
   // and the phantom empty one cancels against the other file's phantom empty

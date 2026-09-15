@@ -26,6 +26,7 @@ import http from 'node:http'
 import fs from 'node:fs'
 import path from 'node:path'
 import { buildVerifyLine, buildJudgeInputLine } from './verify-verdict-line.mjs'
+import { withholdTaggedRows, toolCallName, WITHHOLD_TOOLS, WITHHELD_TAG } from './withhold-tagged-rows.mjs'
 
 const LISTEN_PORT = Number(process.env.TB_PROXY_PORT || 7425)
 const UPSTREAM_HOST = process.env.TB_PROXY_UPSTREAM_HOST || '127.0.0.1'
@@ -1604,6 +1605,12 @@ const server = http.createServer(async (clientReq, clientRes) => {
   headers.authorization = `Bearer ${token}`
   if (bodyBuf.length > 0) headers['content-length'] = String(bodyBuf.length)
 
+  // Rows tagged `terransoul-repo` are TerranSoul's own development lessons and
+  // settings, never task knowledge; they are removed before the agent sees a
+  // retrieval response. See withhold-tagged-rows.mjs for the measurement and
+  // for why this is done here rather than by deleting them from the store.
+  const withholding = WITHHOLD_TOOLS.has(toolCallName(bodyBuf))
+
   const upstream = http.request(
     {
       host: UPSTREAM_HOST,
@@ -1613,6 +1620,42 @@ const server = http.createServer(async (clientReq, clientRes) => {
       headers,
     },
     upstreamRes => {
+      if (withholding) {
+        // BUFFERED, not teed: a row must be gone before any byte reaches the
+        // agent. A retrieval result is a single message, and `noteOutcome`
+        // already waits for 'end' on it.
+        const chunks = []
+        upstreamRes.on('data', chunk => chunks.push(chunk))
+        upstreamRes.on('error', () => {
+          if (!clientRes.headersSent) clientRes.writeHead(502)
+          clientRes.end('upstream unreachable')
+        })
+        upstreamRes.on('end', () => {
+          const original = Buffer.concat(chunks)
+          const { text, withheld } = withholdTaggedRows(original.toString('utf8'))
+          // Nothing withheld: the upstream bytes, untouched.
+          const payload = withheld.length ? Buffer.from(text, 'utf8') : original
+          // Its own line and key, apart from every key a witness counts. The
+          // `served` line is then what the agent actually SAW, so outcome credit
+          // can never land on a row it was never shown. Logged BEFORE the body
+          // is delivered, as the tee path below does: the socket write can
+          // complete inside `end()`, and a reader of the log must not beat it.
+          // Guarded because it now runs BEFORE delivery: a recording fault must
+          // never keep the response from the agent.
+          try {
+            if (withheld.length) record({ withheld, withheld_tag: WITHHELD_TAG })
+            noteOutcome(bodyBuf, withheld.length ? text : original.toString('utf8'))
+          } catch {
+            // Observability only; the trial proceeds.
+          }
+          const outHeaders = { ...upstreamRes.headers }
+          delete outHeaders['transfer-encoding']
+          outHeaders['content-length'] = String(payload.length)
+          clientRes.writeHead(upstreamRes.statusCode || 502, outHeaders)
+          clientRes.end(payload)
+        })
+        return
+      }
       clientRes.writeHead(upstreamRes.statusCode || 502, upstreamRes.headers)
       // TEE, not buffer: the client keeps receiving chunks as they arrive (the
       // MCP streamable-HTTP transport uses SSE, so buffering would stall every
@@ -1651,6 +1694,7 @@ server.listen(LISTEN_PORT, '0.0.0.0', () => {
         : `agent's choice (TB_THINKING_MODE=${THINKING_MODE}) — brain_search defaults to chat`
     }`,
   )
+  console.log(`[tb-proxy] withholding rows tagged '${WITHHELD_TAG}' from ${[...WITHHOLD_TOOLS].join(',')} responses`)
   console.log(
     `[tb-proxy] listening on 0.0.0.0:${LISTEN_PORT} -> ${UPSTREAM_HOST}:${UPSTREAM_PORT} ` +
       `(writes ${

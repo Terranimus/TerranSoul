@@ -68,7 +68,7 @@ import {
 } from 'node:fs'
 import { join, dirname, basename } from 'node:path'
 import { createHash } from 'node:crypto'
-import { runWasSound } from './trial-outcome.mjs'
+import { runWasSound, isCleanPass } from './trial-outcome.mjs'
 import {
   extractDeliverables,
   bashCommandsIn,
@@ -295,16 +295,24 @@ function deliverablesFor(trialDir, errors) {
 }
 
 /**
- * The task's most recent SOUND PASS, across every `jobs*` root on this machine.
+ * The task's most recent CLEAN PASS, across every `jobs*` root on this machine.
  *
  * ⛔ "MOST RECENT TRIAL" IS THE WRONG BASELINE AND IT IS THE EASY ONE TO WRITE.
  * A redo campaign runs the same task repeatedly, so the newest trial is usually
  * the previous FAILURE — and diffing today's failure against yesterday's
  * failure reports "no change" about two runs that both lost. The comparison a
  * regression question needs is against the last run that actually WORKED, and a
- * pass that was never a fair run (`runWasSound`) is not one of those: a stale
- * `reward.txt` over a container that never started already produced one phantom
- * pass in this corpus.
+ * stale `reward.txt` over a container that never started already produced one
+ * phantom pass in this corpus.
+ *
+ * ⛔ "WORKED" IS THE CAMPAIGN'S DEFINITION (`isCleanPass`), NOT `runWasSound`.
+ * `runWasSound` answers "was this a fair test", and it short-circuits to true on
+ * `reward > 0` whatever the exception says. A trial with reward 1 that ended in
+ * AgentTimeoutError is therefore "sound" — and `outcomeOf` scores it 0. Picked
+ * as a baseline, it made `regressed_vs_baseline` accuse a failure of regressing
+ * against another failure (measured: a real task's baseline had reward 1 plus
+ * AgentTimeoutError). `isCleanPass` reads the graded reward AND the exception,
+ * and it rejects the phantom pass above too (no verifier result -> ungraded).
  */
 export function findBaseline(baselineBase, task, selfTrialName) {
   let jobs
@@ -323,7 +331,8 @@ export function findBaseline(baselineBase, task, selfTrialName) {
       const result = readJson(join(dir, 'result.json'))
       const reward = readReward(dir)
       if (!(typeof reward === 'number' && reward > 0)) continue
-      if (!runWasSound(result, reward)) continue
+      // The campaign's pass, not merely a fair run: see the docstring above.
+      if (!isCleanPass(result)) continue
       const at = Date.parse(result?.started_at ?? '') || 0
       if (!best || at > best.at) best = { at, dir, name, reward }
     }
@@ -631,7 +640,7 @@ export function suspectsFor(ctx) {
     // deliberately not repeated here: a trial name begins with its task's name,
     // so quoting it would put a benchmark identifier inside a rule's evidence
     // and the redactor would then render it as an unreadable `<task>__xxxx`.
-    add('regressed_vs_baseline', 'a SOUND pass of this task exists on disk (see baseline.trial) and this trial scored 0')
+    add('regressed_vs_baseline', 'a CLEAN pass of this task exists on disk (see baseline.trial) and this trial scored 0')
   }
   if (ctx.incomplete.length) {
     add(
@@ -902,7 +911,7 @@ export function renderMarkdown(r) {
     L.push('')
   }
   if (r.baseline) {
-    L.push('## baseline (most recent SOUND pass)')
+    L.push('## baseline (most recent CLEAN pass)')
     L.push('')
     L.push(
       `- \`${r.baseline.trial}\` reward ${r.baseline.reward} — line delta +${r.baseline.diffstat.added}/-${r.baseline.diffstat.removed} across ${r.baseline.diffstat.changed_files} file(s)`,
