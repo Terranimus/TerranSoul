@@ -24,9 +24,27 @@ trap 'rm -rf "$SANDBOX"' EXIT
 mkdir -p "$SANDBOX/benchmark/tb" "$SANDBOX/mcp-data"
 cp "$HERE/run-two-workers.sh" "$SANDBOX/benchmark/tb/"
 cp "$HERE/sweep-status.sh" "$SANDBOX/benchmark/tb/"
+# The quota/killed judge the launcher calls. Absent on the pre-change tree, in
+# which case this cp fails loudly and the launcher runs its old label rule.
+cp "$HERE/rate-limit-evidence.py" "$SANDBOX/benchmark/tb/"
 CALLS="$SANDBOX/calls.txt"
 HOOKS="$SANDBOX/hooks.txt"
 TB="$SANDBOX/benchmark/tb"
+
+# ⛔ HERMETIC SHIMS FOR THE THREE COMMANDS THAT REACH THE LIVE MACHINE. The halt
+# cases below make the REAL launcher run `_reap_sweep_containers`, which is
+# `docker rm -f` on every container whose name holds `__` -- every live harbor
+# trial on this host -- and `reclaim_port`, which kills an mcp-auth-proxy it
+# finds on :7425/:7426 when the (sandboxed) owner file names no live launcher.
+# Run next to a real sweep (a detached supervisor sleeps and relaunches on its
+# own), this test would tear down that sweep's containers and proxies. Empty
+# docker/netstat/ss make both see nothing, exactly as on an idle host.
+mkdir -p "$SANDBOX/bin"
+for tool in docker netstat ss; do
+  printf '#!/bin/sh\nexit 0\n' > "$SANDBOX/bin/$tool"
+  chmod +x "$SANDBOX/bin/$tool"
+done
+export PATH="$SANDBOX/bin:$PATH"
 
 # ⛔ THE STUB MUST CREATE A JOB DIR, because "did this task produce a new job
 # dir" is now how a PREFLIGHT REFUSAL is told apart from a task result. A stub
@@ -48,7 +66,20 @@ if [ "${STUB_REFUSE:-0}" = "1" ]; then exit 2; fi
 case "$TB_TASKS" in slow*) sleep "${STUB_SLOW_S:-25}" ;; esac
 d="$TB_DRIVER_HOME/jobs/$TB_JOB_PREFIX-$(date +%s)$RANDOM"
 mkdir -p "$d/${TB_TASKS}__x"
-if [ "${STUB_QUOTA_TASK:-}" = "$TB_TASKS" ]; then
+# The 2026-09-15 18:45:47 kill, for the first STUB_KILL_TIMES runs of
+# STUB_KILL_TASK: exit 137, harbor's ApiRateLimitError label, 16,125 output
+# tokens, and a transcript whose last rate_limit_event is allowed_warning at
+# five_hour 0.22. Later runs of the same task fall through to a clean pass.
+if [ -n "${STUB_KILL_TASK:-}" ] && [ "$TB_TASKS" = "$STUB_KILL_TASK" ] \
+   && [ "$(( $(cat "$STUB_KILL_COUNT" 2>/dev/null || echo 0) + 1 ))" -le "${STUB_KILL_TIMES:-1}" ]; then
+  printf '%s' "$(( $(cat "$STUB_KILL_COUNT" 2>/dev/null || echo 0) + 1 ))" > "$STUB_KILL_COUNT"
+  mkdir -p "$d/${TB_TASKS}__x/agent"
+  printf '%s' '{"exception_info":{"exception_type":"ApiRateLimitError","exception_message":"Command failed (exit 137): printf %s \"$i\" | claude --verbose --output-format=stream-json --print 2>&1 | tee /logs/agent/claude-code.txt\nstdout: {\"type\":\"system\",\"subtype\":\"init\",\"cwd\":\"/app\"}\n{\"type\":\"rate_limit_event\",\"rate_limit_info\":{\"status\":\"allowed_warning\",\"resetsAt\":1789956000,\"rateLimitType\":\"seven_day\",\"utilization\":0.67,\"unifiedWindows\":{\"five_hour\":{\"utilization\":0.22,\"resetsAt\":1789476600},\"seven_day\":{\"utilization\":0.67,\"resetsAt\":1789956000}}}} ... [180492 chars truncated] ... l,\"tool_use_result\":{\"stdout\":\"CONTRACT FAILURES: NONE\"}}\n\nstderr: None"},"agent_result":{"n_input_tokens":899017,"n_output_tokens":16125}}' > "$d/${TB_TASKS}__x/result.json"
+  printf '%s\n' '{"type":"system","subtype":"init","cwd":"/app"}' \
+    '{"type":"rate_limit_event","rate_limit_info":{"status":"allowed_warning","resetsAt":1789956000,"rateLimitType":"seven_day","utilization":0.67,"unifiedWindows":{"five_hour":{"utilization":0.22,"resetsAt":1789476600},"seven_day":{"utilization":0.67,"resetsAt":1789956000}}}}' \
+    '{"type":"user","message":{"role":"user","content":[{"tool_use_id":"toolu_1","type":"tool_result","content":"CONTRACT FAILURES: NONE"}]}}' \
+    > "$d/${TB_TASKS}__x/agent/claude-code.txt"
+elif [ "${STUB_QUOTA_TASK:-}" = "$TB_TASKS" ]; then
   printf '%s' '{"exception_info":{"exception_type":"ApiRateLimitError","exception_message":"session limit"},"agent_result":{"n_input_tokens":0,"n_output_tokens":0}}' > "$d/${TB_TASKS}__x/result.json"
 else
   printf '%s' '{"exception_info":null,"agent_result":{"n_input_tokens":900,"n_output_tokens":120},"verifier_result":{"rewards":{"reward":1}}}' > "$d/${TB_TASKS}__x/result.json"
@@ -601,6 +632,144 @@ fi"
     "$(if [ "$(grep -cx 900 "$SANDBOX/ceilings.txt")" -ge 20 ]; then echo yes; else echo no; fi)"
 fi
 
+
+# ── A KILL IS NOT A QUOTA (2026-09-15 18:45:47) ──────────────────────────────
+#
+# ⛔ MEASURED on sweep ts09151819: pytorch-model-cli (16,125 output tokens) and
+# winning-avg-corewars (11,402) were SIGKILLed in the same second. harbor wrote
+# `ApiRateLimitError: Command failed (exit 137)` -- its first ERROR_PATTERN is
+# `rate.?limit` over the whole stdout, and every transcript carries routine
+# rate_limit_event records -- and job_hit_quota, which returned true on that
+# label alone, halted BOTH workers as "QUOTA EXHAUSTED" with the account at 22 %
+# of its five-hour window. Two tasks were left owed and the supervisor slept a
+# blind hour.
+echo "== the ApiRateLimitError LABEL alone is not a quota; positive evidence is =="
+source <(sed -n '/^job_hit_quota() {/,/^}/p' "$HERE/run-two-workers.sh")
+source <(sed -n '/^job_was_killed_with_work() {/,/^}/p' "$HERE/run-two-workers.sh")
+KJOB="$SANDBOX/killedjob"; mkdir -p "$KJOB/t__x/agent"
+cat > "$KJOB/t__x/result.json" <<'JSON'
+{"exception_info":{"exception_type":"ApiRateLimitError","exception_message":"Command failed (exit 137): claude --verbose --output-format=stream-json --print 2>&1 | tee /logs/agent/claude-code.txt\nstdout: {\"type\":\"system\",\"subtype\":\"init\"} ... [180492 chars truncated] ... l,\"tool_use_result\":{\"stdout\":\"CONTRACT FAILURES: NONE\"}}\n\nstderr: None"},
+ "agent_result":{"n_input_tokens":899017,"n_output_tokens":16125}}
+JSON
+printf '%s\n' '{"type":"rate_limit_event","rate_limit_info":{"status":"allowed_warning","resetsAt":1789956000,"rateLimitType":"seven_day","utilization":0.67,"unifiedWindows":{"five_hour":{"utilization":0.22,"resetsAt":1789476600},"seven_day":{"utilization":0.67,"resetsAt":1789956000}}}}' \
+  > "$KJOB/t__x/agent/claude-code.txt"
+# FAILS ON THE PRE-CHANGE TREE: the old rule returned true on exc=='ApiRateLimitError'.
+job_hit_quota "$KJOB" && q=1 || q=0
+check "an exit-137 kill with work and an allowed_warning event is NOT quota" "0" "$q"
+# FAILS ON THE PRE-CHANGE TREE: job_was_killed_with_work did not exist.
+job_was_killed_with_work "$KJOB" >/dev/null 2>&1 && k=1 || k=0
+check "... and IS recognised as killed-with-work" "1" "$k"
+
+# The 2026-09-04 real quota (zero tokens, 429, "session limit"). FAILS ON THE
+# PRE-CHANGE TREE on its SECOND half: the old rule also answered quota, but from
+# the label, and recorded no evidence -- so the halt could not say why, and the
+# same answer came back for the kill above.
+FJOB="$SANDBOX/quota0904job"; mkdir -p "$FJOB/t__x"
+cat > "$FJOB/t__x/result.json" <<'JSON'
+{"exception_info":{"exception_type":"ApiRateLimitError","exception_message":"Command failed (exit 1): claude --print\nstdout: {\"type\":\"system\",\"subtype\":\"init\"}\n{\"is_error\":true,\"api_error_status\":429,\"result\":\"You've hit your session limit - resets 4:50am (UTC)\",\"type\":\"result\"}\n\nstderr: None"},
+ "agent_result":{"n_input_tokens":0,"n_output_tokens":0}}
+JSON
+QUOTA_EVIDENCE=""
+job_hit_quota "$FJOB" && q=1 || q=0
+check "the 2026-09-04 shape IS quota, by its 429 -- not by its label" \
+  "quota=1 evidence=t__x	api_error_status 429 in exception_message" "quota=$q evidence=${QUOTA_EVIDENCE:-}"
+job_was_killed_with_work "$FJOB" >/dev/null 2>&1 && k=1 || k=0
+check "... and is never read as killed-with-work" "0" "$k"
+
+# A last rate_limit_event with an exhausted window, and no 429 or phrase anywhere.
+# FAILS ON THE PRE-CHANGE TREE: quota came from the label, evidence was empty.
+XJOB="$SANDBOX/exhaustedjob"; mkdir -p "$XJOB/t__x/agent"
+printf '%s' '{"exception_info":{"exception_type":"ApiRateLimitError","exception_message":"Command failed (exit 137): claude --print"},"agent_result":{"n_output_tokens":16125}}' > "$XJOB/t__x/result.json"
+printf '%s\n' '{"type":"rate_limit_event","rate_limit_info":{"status":"rejected","resetsAt":1789404600,"rateLimitType":"five_hour","unifiedWindows":{"five_hour":{"utilization":1,"resetsAt":1789404600},"seven_day":{"utilization":0.31,"resetsAt":1789956000}}}}' \
+  > "$XJOB/t__x/agent/claude-code.txt"
+QUOTA_EVIDENCE=""
+job_hit_quota "$XJOB" && q=1 || q=0
+check "an exhausted window IS quota, even on an exit-137 trial with work" \
+  "quota=1 evidence=t__x	last rate_limit_event: five_hour window at utilization 1" "quota=$q evidence=${QUOTA_EVIDENCE:-}"
+
+# A GUARD, not new-vs-old (the old tree halts here too): a judge that cannot
+# answer must fall back to halting, never to banking a spent session's tasks.
+# Killed by deleting the fallback.
+job_hit_quota_unusable() ( RATE_LIMIT_EVIDENCE="$SANDBOX/no-such-helper.py"; job_hit_quota "$1" 2>/dev/null )
+job_hit_quota_unusable "$KJOB" && q=1 || q=0
+check "an unusable judge falls back to the conservative label (halts)" "1" "$q"
+
+echo "== an exit-137 KILL with work is REQUEUED ONCE, not halted =="
+# FAILS ON THE PRE-CHANGE TREE: the kill halted as quota after ONE kill-me call
+# (exit 3, "HALTED: quota", w0-b never ran), so every check below reads that.
+KLEDGER="$SANDBOX/kill-ledger.txt"; KCOUNT="$SANDBOX/kill-count.txt"
+: > "$CALLS"; : > "$HOOKS"; : > "$KLEDGER"; rm -f "$KCOUNT"
+rm -rf "$TB/jobs"; rm -f "$SANDBOX/mcp-data/logs/"*.log
+printf 'kill-me w1-a w0-b w1-b\n' > "$SANDBOX/kill.txt"
+sweep "$SANDBOX/kill.txt" STUB_KILL_TASK=kill-me STUB_KILL_TIMES=1 STUB_KILL_COUNT="$KCOUNT" \
+      STUB_LEDGER_LOG="$KLEDGER" >"$SANDBOX/kill.log" 2>&1
+check "a killed-with-work trial does NOT halt the sweep" "0" "$?"
+check "no QUOTA EXHAUSTED on a kill" "0" "$(grep -c 'QUOTA EXHAUSTED' "$SANDBOX/kill.log")"
+check "no HALTED line" "0" "$(grep -c 'HALTED' "$SANDBOX/kill.log")"
+check "the kill is announced once, in the stated form" "1" \
+  "$(grep -c '^\[2w:ts[0-9]*w0\] AGENT KILLED (exit 137, no quota evidence) on kill-me' "$SANDBOX/kill.log")"
+check "worker 0 ran it again at the END of its list" "kill-me w0-b kill-me" \
+  "$(grep '|7425|' "$CALLS" | cut -d'|' -f3 | tr '\n' ' ' | sed 's/ $//')"
+check "worker 1 is untouched" "w1-a w1-b" \
+  "$(grep '|7426|' "$CALLS" | cut -d'|' -f3 | tr '\n' ' ' | sed 's/ $//')"
+# NOT MARKED DONE: it stays owed, moved to the end, until the requeued run leaves it.
+check "the .remaining ledger keeps it owed, at the end" "kill-me:kill-me w0-b|w0-b:w0-b kill-me|kill-me:kill-me" \
+  "$(grep 'w0 ' "$KLEDGER" | sed 's/^[^ ]* //; s/: /:/' | tr '\n' '|' | sed 's/|$//')"
+PK="$(grep -m1 -oE 'ts[0-9]{8}w0' "$SANDBOX/kill.log")"
+check "the requeue ledger records task, killed trial and work evidence" "kill-me|kill-me__x|16125 output tokens" \
+  "$(awk -F'\t' '{print $1"|"$2"|"$4}' "$TB/jobs/$PK.requeued" 2>/dev/null)"
+check "the sweep log carries one machine-readable REQUEUED line" "1" \
+  "$(grep -c '^\[sweep\] REQUEUED worker 0: kill-me ' "$SANDBOX/mcp-data/logs/tbench-par0.log")"
+check "the end of the run discloses the k=2 task" "1" \
+  "$(grep -c "^\[2w\] k=2 DISCLOSURE ($PK): kill-me " "$SANDBOX/kill.log")"
+
+echo "== a SECOND kill of the same task is NOT requeued again =="
+# FAILS ON THE PRE-CHANGE TREE: the first kill already halted as quota (one
+# kill-me call, exit 3, no REQUEUED or AGAIN line).
+: > "$CALLS"; rm -f "$KCOUNT"; rm -rf "$TB/jobs"
+sweep "$SANDBOX/kill.txt" STUB_KILL_TASK=kill-me STUB_KILL_TIMES=2 STUB_KILL_COUNT="$KCOUNT" \
+      >"$SANDBOX/kill2.log" 2>&1
+rc=$?
+check "the task ran exactly twice -- one requeue, never a loop" "2" "$(grep -c '|kill-me|' "$CALLS")"
+check "exactly one REQUEUED line" "1" "$(grep -c '^\[sweep\] REQUEUED worker 0: kill-me ' "$SANDBOX/kill2.log")"
+check "the second kill is announced as AGAIN" "1" \
+  "$(grep -c 'AGENT KILLED AGAIN (exit 137, no quota evidence) on kill-me' "$SANDBOX/kill2.log")"
+PK2="$(grep -m1 -oE 'ts[0-9]{8}w0' "$SANDBOX/kill2.log")"
+check "the requeue ledger still holds ONE entry" "1" "$(grep -c . "$TB/jobs/$PK2.requeued" 2>/dev/null)"
+# It FALLS THROUGH to the existing checks: worked, not zero-token, not a
+# RETRYABLE name -- so no outage halt, and the list finishes.
+check "the second kill falls through without a halt" "0 0" "$rc $(grep -c 'HALTED' "$SANDBOX/kill2.log")"
+check "the rest of the list still ran" "w0-b w1-a w1-b" \
+  "$(grep -v '|kill-me|' "$CALLS" | cut -d'|' -f3 | sort | tr '\n' ' ' | sed 's/ $//')"
+
+echo "== the one-requeue marker OUTLIVES a relaunch =="
+# sweep-until-done.sh relaunches this script with jobs/ts<stamp>.remaining; the
+# ledger beside it must stop a second requeue in the NEW process.
+# FAILS ON THE PRE-CHANGE TREE: no lineage was read and the kill halted as quota.
+: > "$CALLS"; rm -f "$KCOUNT"; rm -rf "$TB/jobs"
+mkdir -p "$SANDBOX/relaunch"
+printf 'kill-me\n' > "$SANDBOX/relaunch/ts09150000.remaining"
+printf 'kill-me\tkill-me__old\tts09150000w0-20260915-184013\t16125 output tokens\n' > "$SANDBOX/relaunch/ts09150000.requeued"
+sweep "$SANDBOX/relaunch/ts09150000.remaining" STUB_KILL_TASK=kill-me STUB_KILL_TIMES=9 STUB_KILL_COUNT="$KCOUNT" \
+      >"$SANDBOX/kill3.log" 2>&1
+check "the inherited lineage is announced" "1" "$(grep -c '^\[2w\] requeue lineage: .*ts09150000.requeued (1 task' "$SANDBOX/kill3.log")"
+check "an inherited requeue is honoured: the task runs once" "1" "$(grep -c '|kill-me|' "$CALLS")"
+check "and is announced as AGAIN, not requeued" "1 0" \
+  "$(grep -c 'AGENT KILLED AGAIN' "$SANDBOX/kill3.log") $(grep -c '^\[sweep\] REQUEUED' "$SANDBOX/kill3.log")"
+
+echo "== a halt carries the requeue ledger beside the merged .remaining =="
+# FAILS ON THE PRE-CHANGE TREE: _merge_requeued did not exist, so no
+# ts<stamp>.requeued was written and the next launch could requeue again.
+source <(sed -n '/^_merge_requeued() {/,/^}/p' "$HERE/run-two-workers.sh")
+JOBS_ROOT="$SANDBOX/mr"; STAMP="09159999"; P0="ts09159999w0"; P1="ts09159999w1"
+mkdir -p "$JOBS_ROOT"
+REQUEUE_LINEAGE="$JOBS_ROOT/ts09150000.requeued"
+printf 'old-task\told__t\tj0\t9 output tokens\n' > "$REQUEUE_LINEAGE"
+printf 'kill-me\tkill-me__x\tj1\t16125 output tokens\n' > "$JOBS_ROOT/$P0.requeued"
+printf 'old-task\told__t\tj0\t9 output tokens\n' > "$JOBS_ROOT/$P1.requeued"
+_merge_requeued 2>/dev/null
+check "inherited and new requeues, each once" "old-task kill-me" \
+  "$(cut -f1 "$JOBS_ROOT/ts09159999.requeued" 2>/dev/null | tr '\n' ' ' | sed 's/ $//')"
 
 echo
 if [ "$fails" -eq 0 ]; then echo "two-workers.test.sh: ALL PASS"; else echo "two-workers.test.sh: $fails FAILURE(S)"; fi

@@ -145,6 +145,43 @@ _reset_epoch_for_stamp() { # <stamp> -> epoch on stdout, empty when not found
   return 0
 }
 
+# ── the STRUCTURED reset: the account's own epoch ───────────────────────────
+#
+# ⛔ MEASURED 2026-09-15 18:46:10 (sweep ts09151819): "no usable reset time
+# (quota) — waiting the fallback 3600s + 180s grace". There was no reset string
+# because there was no quota -- two SIGKILLed trials wore harbor's
+# ApiRateLimitError label (see rate-limit-evidence.py). But even a REAL quota
+# only gets the text parser above, which needs a "resets 4:50pm (UTC)" string,
+# guesses the date, and reads a local time when "(UTC)" is missing.
+#
+# The transcript already carries the answer with none of that guessing. The
+# 2026-09-15 02:35 quota's last record before the halt was
+#     {"type":"rate_limit_event","rate_limit_info":{"status":"rejected",
+#      "resetsAt":1789404600,"rateLimitType":"five_hour",
+#      "unifiedWindows":{"five_hour":{"utilization":1,"resetsAt":1789404600},...
+# -- an absolute epoch for the exhausted window.
+#
+# HOW TO APPLY: read the LAST rate_limit_event of the trial that tripped the
+# quota (newest job dirs of this stamp first, and only a trial that carries
+# positive quota evidence -- a killed sibling's allowed_warning event is never
+# read as the reset) and return the resetsAt of the exhausted window, the latest
+# one when several are spent. The caller prefers it over the text parser, which
+# is kept for transcripts that carry no structured event. One parser decides
+# both "is this a quota" (run-two-workers.sh) and "when does it clear" (here),
+# so the halt and the schedule cannot be about different windows.
+RATE_LIMIT_EVIDENCE="${TB_RATE_LIMIT_EVIDENCE:-$HERE/rate-limit-evidence.py}"
+_reset_epoch_structured_for_stamp() { # <stamp> -> epoch on stdout, empty when no exhausted window was recorded
+  local stamp="$1" out
+  local dirs=()
+  [ -f "$RATE_LIMIT_EVIDENCE" ] || return 0
+  mapfile -t dirs < <(ls -1dt "$JOBS_ROOT/ts${stamp}w0"-*/ "$JOBS_ROOT/ts${stamp}w1"-*/ 2>/dev/null | head -4)
+  [ "${#dirs[@]}" -gt 0 ] || return 0
+  out="$(python "$RATE_LIMIT_EVIDENCE" reset-epoch "${dirs[@]}" 2>/dev/null)" || return 0
+  out="${out%%$'\t'*}"
+  case "$out" in ''|*[!0-9]*) return 0 ;; esac
+  printf '%s' "$out"
+}
+
 # ── watching a launched sweep ────────────────────────────────────────────────
 _lock_pid_alive() {
   local pid
@@ -376,12 +413,29 @@ while :; do
     say "relaunch halted again after only ${ran_for}s (< ${TIGHT_LOOP_S}s) — ignoring the"
     say "printed reset time and waiting the fallback instead."
   elif [ "$verdict" = "quota" ]; then
-    target="$(_reset_epoch_for_stamp "$stamp")"
+    # STRUCTURED FIRST, then the free text, then the fallback below. The epoch
+    # is absolute, so it needs none of the text parser's date guessing.
+    target="$(_reset_epoch_structured_for_stamp "$stamp")"
+    if [ -n "$target" ]; then
+      say "reset read from the tripping trial's last rate_limit_event (exhausted window): $(date -d "@$target" '+%Y-%m-%d %H:%M:%S %Z')"
+      # ⛔ NEVER SCHEDULE A RESET IN THE PAST. An epoch already behind the clock
+      # (the supervisor noticed late, or the window cleared during the halt) is
+      # a window that has ALREADY reset: resume after the grace alone. Unlike
+      # the text parser, it is never rolled forward a day -- the epoch carries
+      # its own date, and a roll would park the sweep 24 h for nothing.
+      if [ "$target" -lt "$now" ]; then
+        say "that reset is already $(( now - target ))s in the past — resuming after the grace only"
+        target="$now"
+      fi
+    else
+      target="$(_reset_epoch_for_stamp "$stamp")"
+      [ -n "$target" ] && say "reset read from the halted trial's free-text reset string (no exhausted window in a structured rate_limit_event)"
+    fi
   fi
 
   if [ -n "$target" ]; then
     target=$(( target + GRACE_S ))
-    say "reset parsed from the halted trial's transcript: $(date -d "@$target" '+%Y-%m-%d %H:%M:%S %Z') (reset + ${GRACE_S}s grace)"
+    say "resuming at: $(date -d "@$target" '+%Y-%m-%d %H:%M:%S %Z') (reset + ${GRACE_S}s grace)"
   else
     target=$(( now + FALLBACK_S + GRACE_S ))
     say "no usable reset time ($verdict) — waiting the fallback ${FALLBACK_S}s + ${GRACE_S}s grace"

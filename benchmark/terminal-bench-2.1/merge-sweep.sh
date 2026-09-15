@@ -690,6 +690,39 @@ if required_k and required_k != observed_k:
 if tasks_below_k:
     print(f"      BELOW 5: {', '.join(tasks_below_k[:12])}"
           + (f" … and {len(tasks_below_k)-12} more" if len(tasks_below_k) > 12 else ""))
+
+# ── REQUEUED AFTER AN EXTERNAL KILL: UNEQUAL k, DISCLOSED ───────────────────
+# MEASURED 2026-09-15 18:45:47 (sweep ts09151819): pytorch-model-cli and
+# winning-avg-corewars were SIGKILLed mid-work (exit 137) with the account at
+# 22 % of its five-hour window, and harbor labelled both ApiRateLimitError.
+# run-two-workers.sh now requeues such a task ONCE instead of halting, and writes
+# jobs/<prefix>.requeued. The killed trial stays on disk -- it is an errored,
+# ungraded trial where the agent ran, so it is scored 0 above per SUBMIT.md --
+# and the requeue adds a second trial for that task only.
+#
+# WHY IT MUST BE PRINTED: a per-trial Accuracy over a k=1 sweep is then
+# reweighted toward exactly these tasks. That is the "restart re-runs one task"
+# hazard this script's header already names, and its answer is the same:
+# DISCLOSE unequal k, never silently publish it. A ledger nothing reads would be
+# the writer-with-no-reader shape again.
+requeued = []
+for prefix in prefixes:
+    ledger = os.path.join(jobs_dir, prefix + ".requeued")
+    if not os.path.isfile(ledger):
+        continue
+    with open(ledger, encoding="utf-8", errors="replace") as fh:
+        for ln in fh:
+            cols = ln.rstrip("\r\n").split("\t")
+            if cols and cols[0]:
+                cols += [""] * (4 - len(cols))
+                requeued.append((cols[0], cols[1], cols[2], cols[3], prefix))
+if requeued:
+    print("")
+    print(f"  REQUEUED after an external kill (exit 137, no quota evidence): {len(requeued)} task(s) -- UNEQUAL k, DISCLOSE")
+    for task, trial, job, evidence, prefix in sorted(requeued):
+        print(f"      {task}: k={len(trials.get(task, []))} on disk -- killed trial {trial or '?'}"
+              f" ({job or '?'}; {evidence or 'no evidence recorded'}) scores 0; the requeue added a trial  [{prefix}]")
+    print("      per-trial Accuracy is reweighted toward these tasks; state it wherever the number is published.")
 # ⛔ THE BAR COMPARISON WAS WRONG IN QUANTITY *AND* IN SCALE, AND THEREFORE
 # ALWAYS SAID "BEATS THE BAR".
 #

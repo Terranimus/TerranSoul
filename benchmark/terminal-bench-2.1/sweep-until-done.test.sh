@@ -28,6 +28,10 @@ trap 'rm -rf "$SANDBOX"' EXIT
 TB="$SANDBOX/benchmark/tb"
 mkdir -p "$TB/jobs" "$SANDBOX/mcp-data/logs"
 cp "$SUT_SRC" "$TB/sweep-until-done.sh"
+# The production layout: the reset scheduler reads the same judge as the
+# launcher. Absent on the pre-change tree, where this cp fails loudly and the
+# supervisor has only its free-text parser.
+cp "$HERE_T/rate-limit-evidence.py" "$TB/"
 SUT="$TB/sweep-until-done.sh"
 
 # 2026-09-14 17:08:39 UTC — the real halt happened minutes after this, and every
@@ -83,6 +87,31 @@ if [ -n "${STUB_RESET_TEXT:-}" ] && [ "$verdict" = "quota" ]; then
   mkdir -p "$d"
   printf '{"exception_info":{"exception_type":"ApiRateLimitError","exception_message":"api_error_status: 429 %s"}}' \
     "$STUB_RESET_TEXT" > "$d/result.json"
+fi
+
+# The tripping trial's stream-json transcript: its LAST rate_limit_event is
+# STUB_RATE_EVENT, verbatim. A result.json is written only if the text block
+# above did not already write one, so both evidence kinds can sit in ONE trial --
+# which is what makes "structured wins over free text" observable.
+if [ -n "${STUB_RATE_EVENT:-}" ] && [ "$verdict" = "quota" ]; then
+  d="$TB/jobs/ts${stamp}w0-2026091${n}-030000/crack-7z-hash__x"
+  mkdir -p "$d/agent"
+  [ -f "$d/result.json" ] || printf '%s' '{"exception_info":{"exception_type":"ApiRateLimitError","exception_message":"Command failed (exit 1): claude --verbose --output-format=stream-json --print"},"agent_result":{"n_output_tokens":673}}' > "$d/result.json"
+  printf '%s\n' '{"type":"system","subtype":"init","cwd":"/app"}' "$STUB_RATE_EVENT" > "$d/agent/claude-code.txt"
+fi
+
+# The SIBLING worker's trial, killed in the same halt with the 2026-09-15
+# 18:45:47 shape: exit 137, 11,402 tokens, harbor's ApiRateLimitError label, and
+# an allowed_warning event whose top-level resetsAt is the SEVEN-DAY window's.
+# Stamped NEWER than the tripping trial so it is the first dir the supervisor
+# reads -- reading its event as "the reset" would park the sweep for days.
+if [ -n "${STUB_KILLED_SIBLING:-}" ] && [ "$verdict" = "quota" ]; then
+  s="$TB/jobs/ts${stamp}w1-2026091${n}-030500"
+  mkdir -p "$s/winning-avg-corewars__y/agent"
+  printf '%s' '{"exception_info":{"exception_type":"ApiRateLimitError","exception_message":"Command failed (exit 137): claude --verbose --output-format=stream-json --print"},"agent_result":{"n_output_tokens":11402}}' > "$s/winning-avg-corewars__y/result.json"
+  printf '%s\n' '{"type":"rate_limit_event","rate_limit_info":{"status":"allowed_warning","resetsAt":1789956000,"rateLimitType":"seven_day","utilization":0.67,"isUsingOverage":false,"unifiedWindows":{"five_hour":{"utilization":0.22,"resetsAt":1789476600},"seven_day":{"utilization":0.67,"resetsAt":1789956000}}}}' \
+    > "$s/winning-avg-corewars__y/agent/claude-code.txt"
+  touch -d "@$(( $(date +%s) + 120 ))" "$s"
 fi
 exit 0
 STUB
@@ -218,6 +247,78 @@ check "launched at most MAX_WALLS times" "2" "$(grep -c . "$LAUNCHES")"
 grep -q 'resume with: bash .*sweep-until-done.sh .*remaining' "$SANDBOX/e2.log" \
   && ok "prints a resume command a human can paste" \
   || no "prints a resume command a human can paste" "$(cat "$SANDBOX/e2.log")"
+
+# ── (f) the STRUCTURED reset: the tripping trial's own rate_limit_event ─────
+echo "== (f) structured reset from the tripping trial's last rate_limit_event =="
+# ⛔ MEASURED 2026-09-15 18:46:10 (sweep ts09151819): "no usable reset time
+# (quota) — waiting the fallback 3600s". And a REAL quota's transcript already
+# holds an absolute epoch: the 2026-09-15 02:35 halt ended with
+#   {"type":"rate_limit_event","rate_limit_info":{"status":"rejected",
+#    "resetsAt":1789404600,"rateLimitType":"five_hour",...
+#
+# FAILS ON THE PRE-CHANGE TREE: _reset_epoch_structured_for_stamp did not exist,
+# so the unit checks get "command not found" and an empty answer; the supervisor
+# read only the free text, so (f) slept to 4:50pm UTC (85,861 s, not 4,180 s),
+# (f2) had no text at all and slept the 3,780 s fallback instead of the 180 s
+# grace, and (f3)'s source line was never printed.
+R_FUT=$(( NOW + 4000 ))
+ev_rejected() { # <five_hour resetsAt> [seven_day utilization] [seven_day resetsAt]
+  printf '{"type":"rate_limit_event","rate_limit_info":{"status":"rejected","resetsAt":%s,"rateLimitType":"five_hour","overageStatus":"rejected","isUsingOverage":false,"unifiedWindows":{"five_hour":{"utilization":1,"resetsAt":%s},"seven_day":{"utilization":%s,"resetsAt":%s}}}}' \
+    "$1" "$1" "${2:-0.31}" "${3:-1789956000}"
+}
+EV_WARN='{"type":"rate_limit_event","rate_limit_info":{"status":"allowed_warning","resetsAt":1789956000,"rateLimitType":"seven_day","utilization":0.67,"unifiedWindows":{"five_hour":{"utilization":0.22,"resetsAt":1789476600},"seven_day":{"utilization":0.67,"resetsAt":1789956000}}}}'
+structured() { # structured <stamp> -> what the supervisor's own function answers
+  ( TB_UNTIL_DONE_LIB_ONLY=1 TB_UNTIL_DONE_NOW_EPOCH="$NOW" TB_JOBS_DIR="$SANDBOX/sjobs" . "$SUT" >/dev/null 2>&1
+    _reset_epoch_structured_for_stamp "$1" )
+}
+mk_trip() { # mk_trip <stamp> <last event line>
+  local d="$SANDBOX/sjobs/ts$1w0-20260916-010000/crack-7z-hash__x"
+  mkdir -p "$d/agent"
+  printf '%s' '{"exception_info":{"exception_type":"ApiRateLimitError","exception_message":"Command failed (exit 1): claude --print"},"agent_result":{"n_output_tokens":673}}' > "$d/result.json"
+  printf '%s\n' '{"type":"system","subtype":"init"}' "$2" > "$d/agent/claude-code.txt"
+}
+rm -rf "$SANDBOX/sjobs"
+mk_trip 09160100 "$(ev_rejected "$R_FUT")"
+check "the exhausted five_hour window's resetsAt is returned" "$R_FUT" "$(structured 09160100)"
+mk_trip 09160110 "$(ev_rejected "$R_FUT" 1.02 $(( NOW + 90000 )))"
+check "two spent windows return the LATER reset" "$(( NOW + 90000 ))" "$(structured 09160110)"
+# A GUARD, not a new-vs-old check (the old tree also answers empty): the
+# allowed_warning event's top-level resetsAt is the SEVEN-DAY window's, and a
+# parser that read it as the reset would park a sweep for days.
+mk_trip 09160120 "$EV_WARN"
+check "an allowed_warning event yields NO structured reset" "" "$(structured 09160120)"
+
+printf '09160100 quota 2\n09160700 done 0\n' > "$PLAN"
+STUB_RESET_TEXT="You've hit your session limit · resets 4:50pm (UTC)" \
+STUB_RATE_EVENT="$(ev_rejected "$R_FUT")" STUB_KILLED_SIBLING=1 \
+  run_supervisor "$TASKS" > "$SANDBOX/f.log" 2>&1
+check "the structured-reset sweep completes" "0" "$?"
+check "exactly one wait" "1" "$(grep -c . "$SLEEPS")"
+# The newer, killed sibling is read FIRST and skipped: its allowed_warning event
+# would give 1789956000 + 180 - NOW = 550,461 s.
+check "sleeps to the STRUCTURED resetsAt + grace, not the free-text 4:50pm nor the sibling's seven-day epoch" \
+  "4180" "$(sed -n 1p "$SLEEPS")"
+grep -q "reset read from the tripping trial's last rate_limit_event" "$SANDBOX/f.log" \
+  && ok "the log names the structured source" || no "the log names the structured source" "$(grep until-done "$SANDBOX/f.log" | tail -8)"
+
+echo "== (f2) a structured reset already in the past resumes after the grace alone =="
+printf '09160200 quota 2\n09160800 done 0\n' > "$PLAN"
+STUB_RATE_EVENT="$(ev_rejected $(( NOW - 600 )))" run_supervisor "$TASKS" > "$SANDBOX/f2.log" 2>&1
+check "the past-reset sweep completes" "0" "$?"
+# ⛔ NEVER A PAST TARGET, AND NEVER ROLLED A DAY FORWARD: the epoch carries its
+# own date, so a window that has already cleared is resumed into now.
+check "the wait is the grace only" "180" "$(sed -n 1p "$SLEEPS")"
+grep -q 'already 600s in the past' "$SANDBOX/f2.log" \
+  && ok "the past reset is announced" || no "the past reset is announced" "$(grep until-done "$SANDBOX/f2.log" | tail -8)"
+
+echo "== (f3) with no exhausted window the free-text parser still decides =="
+printf '09160300 quota 2\n09160900 done 0\n' > "$PLAN"
+STUB_RESET_TEXT="You've hit your session limit · resets 4:50pm (UTC)" STUB_RATE_EVENT="$EV_WARN" \
+  run_supervisor "$TASKS" > "$SANDBOX/f3.log" 2>&1
+check "the free-text sweep completes" "0" "$?"
+check "sleeps to the free-text reset + grace" "$(( WANT_450PM + 180 - NOW ))" "$(sed -n 1p "$SLEEPS")"
+grep -q "reset read from the halted trial's free-text reset string" "$SANDBOX/f3.log" \
+  && ok "the log names the free-text source" || no "the log names the free-text source" "$(grep until-done "$SANDBOX/f3.log" | tail -8)"
 
 # ── refusals ─────────────────────────────────────────────────────────────────
 echo "== refusals =="

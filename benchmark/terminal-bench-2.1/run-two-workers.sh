@@ -461,9 +461,43 @@ sys.exit(1)
 # help and then marks the task failed. The two need different handling, and
 # only the caller can wait hours -- so this reports the condition and the
 # worker stops rather than pretending a retry is available.
+#
+# ⛔ BUT THE LABEL IS NOT THE EVIDENCE. MEASURED 2026-09-15 18:45:47 (sweep
+# ts09151819): pytorch-model-cli (16,125 output tokens) and winning-avg-corewars
+# (11,402) were SIGKILLed in the same second, harbor wrote
+# `ApiRateLimitError: Command failed (exit 137)`, and this function -- which
+# returned true on `exc=='ApiRateLimitError'` alone -- halted BOTH workers on a
+# spent session that was not spent: the account's own last rate_limit_event in each
+# transcript said five_hour utilization 0.22. harbor's first ERROR_PATTERN is
+# `rate.?limit` over the whole stdout, and every Claude Code transcript carries
+# routine `"type":"rate_limit_event"` records, so ANY failed agent command wears
+# that label. The same mislabel had already turned an owner-pause halt kill into
+# a fake quota earlier that day.
+#
+# So a quota now needs POSITIVE evidence -- a 429 api_error_status, the CLI's own
+# limit wording, or a last rate_limit_event whose status is not allowed /
+# allowed_warning or whose window is at utilization >= 1.0 -- judged by
+# rate-limit-evidence.py, the same file sweep-until-done.sh reads the reset time
+# from. Both real quotas on disk (2026-09-04: zero tokens + 429 + "session
+# limit"; 2026-09-15 02:35: 673 tokens + 429 + a `rejected` event) still halt.
+#
+# FAIL-SAFE: if the helper cannot answer (missing, or it crashed -- exit 3), this
+# falls back to the OLD label rule. Halting on a doubtful quota costs an hour;
+# banking a spent session's tasks as zeros costs the measurement.
+RATE_LIMIT_EVIDENCE="${TB_RATE_LIMIT_EVIDENCE:-$HERE/rate-limit-evidence.py}"
 job_hit_quota() {
-  local job_dir="$1"
+  local job_dir="$1" helper rc
   [ -n "$job_dir" ] && [ -d "$job_dir" ] || return 1
+  helper="${RATE_LIMIT_EVIDENCE:-$HERE/rate-limit-evidence.py}"
+  # A GLOBAL, not a local: the worker prints it next to the halt line.
+  QUOTA_EVIDENCE="$(python "$helper" quota "$job_dir" 2>/dev/null)"
+  rc=$?
+  case "$rc" in
+    0) return 0 ;;
+    1) QUOTA_EVIDENCE=""; return 1 ;;
+  esac
+  QUOTA_EVIDENCE="harbor label only (rate-limit-evidence.py exit $rc)"
+  echo "[2w] rate-limit-evidence.py could not judge $job_dir (exit $rc) -- falling back to the harbor label" >&2
   python -c "
 import json,glob,os,sys
 for p in glob.glob(os.path.join(sys.argv[1],'*','result.json')):
@@ -472,15 +506,59 @@ for p in glob.glob(os.path.join(sys.argv[1],'*','result.json')):
     except Exception:
         continue
     info=d.get('exception_info') or {}
-    exc=info.get('exception_type') or ''
-    msg=info.get('exception_message') or ''
     # No double quote anywhere in this literal: it sits inside a bash
-    # double-quoted `python -c "..."`, and an escaped quote here closed the
+    # double-quoted python -c string, and an escaped quote here closed the
     # shell string early -- a syntax error 50 lines further down.
-    if exc=='ApiRateLimitError' or 'session limit' in msg or 'rate_limit' in msg:
+    if (info.get('exception_type') or '')=='ApiRateLimitError' or 'session limit' in (info.get('exception_message') or ''):
         sys.exit(0)
 sys.exit(1)
 " "$job_dir" 2>/dev/null
+}
+
+# Was the newest job's agent KILLED MID-WORK (exit 137, labelled
+# ApiRateLimitError) with NO quota evidence? Prints "<trial>\t<work evidence>".
+#
+# The sibling of job_was_infra_failure, for the opposite case: that one catches
+# a run that never happened (zero tokens), this one a run that DID happen and
+# was cut off from outside. Neither is a capability result. Work is read from
+# the same three sources, in the same order, as merge-sweep.sh's
+# trial_agent_produced_work, so the sweep and the merge cannot disagree about
+# whether this trial ran.
+job_was_killed_with_work() {
+  local job_dir="$1" helper
+  [ -n "$job_dir" ] && [ -d "$job_dir" ] || return 1
+  helper="${RATE_LIMIT_EVIDENCE:-$HERE/rate-limit-evidence.py}"
+  python "$helper" killed-with-work "$job_dir" 2>/dev/null
+}
+
+# ── THE ONE-REQUEUE MARKER, WHICH MUST OUTLIVE A RELAUNCH ────────────────────
+# A killed task is requeued ONCE. The marker is a ledger on disk, not a shell
+# variable, because sweep-until-done.sh relaunches this script after every wall
+# as a fresh process: an in-memory marker would let a task whose own workload
+# gets it OOM-killed be requeued once per launch, up to the wall budget. Each
+# worker appends to jobs/<prefix>.requeued (task, killed trial, job dir, work
+# evidence); a halt merges both into jobs/ts<stamp>.requeued beside the merged
+# .remaining, and a launch handed `X.remaining` inherits `X.requeued` as tasks
+# that already had their requeue. merge-sweep.sh reads the per-prefix ledgers to
+# disclose the k=2 they cause.
+REQUEUE_LINEAGE=""
+case "$TASKS_FILE" in
+  *.remaining)
+    if [ -s "${TASKS_FILE%.remaining}.requeued" ]; then
+      REQUEUE_LINEAGE="${TASKS_FILE%.remaining}.requeued"
+      echo "[2w] requeue lineage: $REQUEUE_LINEAGE ($(grep -c . "$REQUEUE_LINEAGE") task(s) already had their one requeue)"
+    fi
+    ;;
+esac
+
+_task_was_requeued() { # <prefix> <task>
+  local f
+  for f in "$JOBS_ROOT/$1.requeued" ${REQUEUE_LINEAGE:+"$REQUEUE_LINEAGE"}; do
+    # awk, not `cut | grep -q`: under pipefail an early-exiting grep SIGPIPEs
+    # cut and the pipeline reports 141 -- a match read as "never requeued".
+    [ -f "$f" ] && awk -F'\t' -v t="$2" '$1==t{f=1} END{exit !f}' "$f" && return 0
+  done
+  return 1
 }
 
 # The newest job dir this prefix has produced, or empty. Scoped to the prefix so
@@ -794,12 +872,62 @@ _worker_body() {
       # retrying it cannot succeed -- so it must be tested before the retry.
       if job_hit_quota "$job_dir"; then
         echo "[2w:$prefix] QUOTA EXHAUSTED on $t — the account session limit is spent." >&2
+        echo "[2w:$prefix] evidence: ${QUOTA_EVIDENCE:-unrecorded}" >&2
         echo "[2w:$prefix] Retrying now cannot succeed: a session cap clears at a fixed" >&2
         echo "[2w:$prefix] wall-clock time, not after a delay. STOPPING this worker so the" >&2
         echo "[2w:$prefix] remaining tasks stay UNMEASURED rather than being marked failed." >&2
         echo "[2w:$prefix] Re-run the remaining list after the reset." >&2
-        _signal_halt "quota" "worker $w: ApiRateLimitError / session limit on $t"
+        _signal_halt "quota" "worker $w: quota evidence on $t (${QUOTA_EVIDENCE:-unrecorded})"
         return 3
+      fi
+      # ── KILLED MID-WORK, WEARING THE QUOTA LABEL ───────────────────────────
+      #
+      # ⛔ MEASURED 2026-09-15 18:45:47 (sweep ts09151819). pytorch-model-cli had
+      # printed its own "CONTRACT FAILURES: NONE" 16,125 output tokens in, and
+      # winning-avg-corewars was 11,402 tokens in, when both containers' agent
+      # commands died with exit 137 in the same second. With the account at 22 %
+      # of its five-hour window this was neither a quota nor the agent's result:
+      # something outside the trial killed it (the same shape as that morning's
+      # owner-pause halt kill). The old quota branch halted the sweep on it; with
+      # quota now requiring evidence, the checks below would instead have BANKED
+      # it -- not zero-token, not a RETRYABLE name -- as a measured 0.
+      #
+      # So it is requeued ONCE, at the END of this worker's list, and it stays
+      # owed. Not retried in place: whatever killed two trials at once may still
+      # be happening, and the rest of the list is the cheaper probe of that. The
+      # killed trial stays on disk and scores 0 in merge-sweep.sh, so the task
+      # carries k=2 -- recorded in jobs/<prefix>.requeued and on a `[sweep]
+      # REQUEUED` line so merge-sweep and the report disclose it.
+      #
+      # A SECOND kill of the same task is NOT requeued again (the ledger is the
+      # marker, and it outlives a relaunch): it falls through to the existing
+      # outage/halt checks below unchanged. A task that is killed every time it
+      # runs is a property of that task, and a loop would only spend the sweep
+      # proving it.
+      local killed_info="" killed_trial="" killed_evidence=""
+      if killed_info="$(job_was_killed_with_work "$job_dir")"; then
+        killed_trial="${killed_info%%$'\t'*}"
+        killed_evidence="${killed_info#*$'\t'}"
+        if _task_was_requeued "$prefix" "$t"; then
+          echo "[2w:$prefix] AGENT KILLED AGAIN (exit 137, no quota evidence) on $t — trial $killed_trial ($killed_evidence)." >&2
+          echo "[2w:$prefix] It already had its ONE requeue, so it is not requeued again; the existing" >&2
+          echo "[2w:$prefix] outage/halt checks decide what this trial is." >&2
+          echo "[sweep] KILLED AGAIN worker $w: $t (trial $killed_trial) — already requeued once, not again"
+        else
+          echo "[2w:$prefix] AGENT KILLED (exit 137, no quota evidence) on $t — trial $killed_trial ($killed_evidence)." >&2
+          echo "[2w:$prefix] The agent was mid-work and the account was not spent, so this is neither a" >&2
+          echo "[2w:$prefix] quota nor a task result. NOT halting and NOT marking it done: requeued ONCE" >&2
+          echo "[2w:$prefix] at the end of this worker's list. The killed trial still scores 0 (k=2)." >&2
+          printf '%s\t%s\t%s\t%s\n' "$t" "$killed_trial" "$(basename "$job_dir")" "$killed_evidence" \
+            >> "$JOBS_ROOT/$prefix.requeued"
+          echo "[sweep] REQUEUED worker $w: $t (killed trial $killed_trial, exit 137, no quota evidence) — k=2 for this task"
+          queue+=("$t")
+          keep=()
+          for x in ${unrun[@]+"${unrun[@]}"}; do [ "$x" = "$t" ] || keep+=("$x"); done
+          unrun=(${keep[@]+"${keep[@]}"} "$t")
+          _write_remaining "$remaining" ${unrun[@]+"${unrun[@]}"}
+          break
+        fi
       fi
       if [ "$attempt" -eq 1 ] && job_was_infra_failure "$job_dir"; then
         echo "[2w:$prefix] $t broke around the agent (zero-token / transient) — retrying ONCE"
@@ -944,7 +1072,32 @@ _merge_remaining() {
     fi
   done
   if [ "${#left[@]}" -gt 0 ]; then printf '%s\n' "${left[@]}" > "$out"; else : > "$out"; fi
+  _merge_requeued
   printf '%s' "$out"
+}
+
+# The one-requeue ledger travels WITH the merged .remaining (same basename,
+# `.requeued`), because that pair is exactly what sweep-until-done.sh hands the
+# next launch. Inherited lines are carried forward so a task killed on launch 1
+# is still "already requeued" on launch 3. Silent on stdout: _merge_remaining's
+# stdout is the path its callers capture.
+_merge_requeued() {
+  local out="$JOBS_ROOT/ts${STAMP}.requeued" merged
+  merged="$(cat ${REQUEUE_LINEAGE:+"$REQUEUE_LINEAGE"} "$JOBS_ROOT/$P0.requeued" "$JOBS_ROOT/$P1.requeued" 2>/dev/null \
+            | awk 'NF && !seen[$0]++')"
+  [ -n "$merged" ] && printf '%s\n' "$merged" > "$out"
+  return 0
+}
+
+# One line per requeued task at the END of the run, where the operator reads,
+# so a k=2 is never discovered only inside a merge report.
+_disclose_requeues() {
+  local p
+  for p in "$P0" "$P1"; do
+    [ -s "$JOBS_ROOT/$p.requeued" ] || continue
+    echo "[2w] k=2 DISCLOSURE ($p): $(cut -f1 "$JOBS_ROOT/$p.requeued" | tr '\n' ' ')— requeued once after an exit-137 kill with no quota evidence; ledger $JOBS_ROOT/$p.requeued, listed by merge-sweep.sh"
+  done
+  return 0
 }
 
 rm -f "$JOBS_ROOT/$P0.rc" "$JOBS_ROOT/$P1.rc"
@@ -997,14 +1150,17 @@ if [ -n "$HALT_KIND" ]; then
   n="$(grep -c . "$REMAIN" 2>/dev/null)"; n="${n:-0}"
   echo "[sweep] HALTED: $HALT_KIND — resume with: bash run-two-workers.sh $REMAIN" >&2
   echo "[sweep] $n task(s) stayed UNMEASURED; nothing already scored was dropped." >&2
+  _disclose_requeues >&2
   echo "[sweep] partial results still merge: bash merge-sweep.sh $JOBS_ROOT $P0 && bash merge-sweep.sh $JOBS_ROOT $P1" >&2
   case "$HALT_KIND" in preflight) exit 4 ;; *) exit 3 ;; esac
 fi
 
 if [ "${RC0:-1}" != "0" ] || [ "${RC1:-1}" != "0" ]; then
   REMAIN="$(_merge_remaining)"
+  _disclose_requeues >&2
   echo "[sweep] a worker exited non-zero (w0=$RC0 w1=$RC1) — resume with: bash run-two-workers.sh $REMAIN" >&2
   exit 3
 fi
 
+_disclose_requeues
 echo "[2w] both workers finished — merge with: bash merge-sweep.sh jobs $P0 && bash merge-sweep.sh jobs $P1"
