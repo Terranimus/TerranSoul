@@ -35,6 +35,24 @@
 # intention. So this waits for all three properties and says which one it is
 # still waiting on.
 #
+# A COLD MODEL IS THE ONE "NOT READY" THAT WAITING NEVER CLEARS ON ITS OWN.
+# The brain reports llm_provider_state "degraded" with "model '<id>' not in
+# /api/ps (cold start)" whenever Ollama has that model UNLOADED, which Ollama
+# does after keep_alive -- 5 minutes by default -- of idleness. MEASURED
+# 2026-09-15 16:02: nothing on this path ever LOADED the model, so the 300 s
+# wait expired with "did not become usable within 300s ... llm_provider_state
+# is 'degraded'", run-two-workers.sh refused, and the sweep ran zero trials. A
+# single load request sent by hand made the brain healthy within 17 s. Earlier
+# launches had worked only because the model was still resident from recent
+# use, and the per-task re-check hit the same state whenever a long trial with
+# few LLM calls let the model expire. So the wait sends ONE load request -- for
+# the model /health itself names, through the loader run-dg.sh's warmth gate
+# uses (ollama-warm.sh) -- and keeps waiting. Once per wait, so a brain that
+# stays cold costs Ollama one request, not one per poll; any OTHER degraded
+# cause is refused exactly as before. Knobs, both optional:
+#   OLLAMA_HOST                  where Ollama is (default http://127.0.0.1:11434)
+#   TB_OLLAMA_WARM_KEEP_ALIVE    the lease the load asks for (default 2h)
+#
 # IDEMPOTENT by design: a brain that is already up, ready and isolated is left
 # strictly alone and this exits 0. One MCP at a time is the standing rule; this
 # script must never be the thing that starts a second one.
@@ -49,6 +67,8 @@ DATA="${TB_BRAIN_DATA:-$REPO/mcp-data-tbench-clean}"
 BIN="${TB_BENCH_BRAIN_BIN:-$REPO/target-mcp/release/terransoul.exe}"
 WAIT_S="${TB_BENCH_BRAIN_WAIT_S:-300}"
 TOKEN_FILE="$DATA/mcp-token.txt"
+OUT="$DATA/bench-brain.out"
+ERR="$DATA/bench-brain.err"
 
 # THE PRODUCTION TRAY IS NEVER THIS SCRIPT'S TARGET. A TB_BRAIN_PORT of 7423
 # would make every "start" -- and every later stop-bench-brain.sh -- act on the
@@ -58,6 +78,13 @@ if [ "$PORT" = "$PROD_PORT" ]; then
   echo "[bench-brain] The bench brain is a SEPARATE instance on its own port and store." >&2
   exit 2
 fi
+
+# The loader is shared with run-dg.sh, never copied. Its absence is not fatal:
+# a cold model is then refused exactly as it was before the loader existed, and
+# the refusal names the missing file.
+WARM_LIB="$HERE/ollama-warm.sh"
+# shellcheck source=ollama-warm.sh
+[ -f "$WARM_LIB" ] && . "$WARM_LIB"
 
 _health_body() { # <port> -> body on stdout (empty when unreachable)
   curl -s -m 5 "http://127.0.0.1:$1/health" 2>/dev/null || true
@@ -76,12 +103,48 @@ _tools_list_code() { # <port> <token> -> http code
     -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' 2>/dev/null || echo "000"
 }
 
+# ISOLATION, PROVED TWO WAYS, for the /health body in $1. Prints a one-line
+# state; returns 0 only when :$PORT is provably serving $DATA. A separate
+# function so the cold-model branch below asks the SAME question before it
+# loads anything, rather than a second copy that can drift.
+# (1) The token that authenticates :$PORT lives in the CLEAN store. A brain
+#     started against the production data dir writes its token into mcp-data/
+#     instead, so this check still fires when :7423 is down -- which the
+#     memory_total comparison alone cannot do.
+# (2) memory_total differs from production's. Only checkable when :$PROD_PORT
+#     answers; a silent skip would be the failure this block exists to stop,
+#     so the skip is stated in the line this prints.
+_isolation_verdict() {
+  local body="$1" total prod_body prod_total token code
+  token="$(tr -d '\r\n' < "$TOKEN_FILE" 2>/dev/null || true)"
+  if [ -z "$token" ]; then echo "no bench token at $TOKEN_FILE"; return 1; fi
+  code="$(_tools_list_code "$PORT" "$token")"
+  if [ "$code" != "200" ]; then
+    echo "tools/list on :$PORT returned $code with the CLEAN store's token -- this brain is not serving $DATA"
+    return 1
+  fi
+
+  total="$(printf '%s' "$body" | _json_field memory_total)"
+  prod_body="$(_health_body "$PROD_PORT")"
+  if [ -n "$prod_body" ]; then
+    prod_total="$(printf '%s' "$prod_body" | _json_field memory_total)"
+    if [ -n "$total" ] && [ -n "$prod_total" ] && [ "$total" = "$prod_total" ]; then
+      echo "memory_total $total is IDENTICAL to the production brain's on :$PROD_PORT -- not isolated"
+      return 1
+    fi
+    echo "ready; memory_total=$total (production :$PROD_PORT=$prod_total)"
+  else
+    echo "ready; memory_total=$total (production :$PROD_PORT unreachable, so only the token proves isolation)"
+  fi
+  return 0
+}
+
 # Returns 0 when :$PORT is up, READY and ISOLATED, printing a one-line state.
 # The three conditions are reported separately on purpose: "brain not ready" and
 # "brain is serving the production store" need completely different responses,
 # and a single boolean hides which one happened.
 bench_brain_is_usable() {
-  local body state total prod_body prod_total token code
+  local body state token code
   body="$(_health_body "$PORT")"
   if [ -z "$body" ]; then echo "no /health answer on :$PORT"; return 1; fi
 
@@ -100,35 +163,97 @@ bench_brain_is_usable() {
     *) echo "llm_provider_state is '$state' (not ready)"; return 1 ;;
   esac
 
-  # ISOLATION, PROVED TWO WAYS.
-  # (1) The token that authenticates :$PORT lives in the CLEAN store. A brain
-  #     started against the production data dir writes its token into mcp-data/
-  #     instead, so this check still fires when :7423 is down -- which the
-  #     memory_total comparison alone cannot do.
-  token="$(tr -d '\r\n' < "$TOKEN_FILE" 2>/dev/null || true)"
-  if [ -z "$token" ]; then echo "no bench token at $TOKEN_FILE"; return 1; fi
-  code="$(_tools_list_code "$PORT" "$token")"
-  if [ "$code" != "200" ]; then
-    echo "tools/list on :$PORT returned $code with the CLEAN store's token -- this brain is not serving $DATA"
-    return 1
-  fi
+  _isolation_verdict "$body"
+}
 
-  # (2) memory_total differs from production's. Only checkable when :$PROD_PORT
-  #     answers; a silent skip would be the failure this block exists to stop,
-  #     so the skip is stated in the line this prints.
-  total="$(printf '%s' "$body" | _json_field memory_total)"
-  prod_body="$(_health_body "$PROD_PORT")"
-  if [ -n "$prod_body" ]; then
-    prod_total="$(printf '%s' "$prod_body" | _json_field memory_total)"
-    if [ -n "$total" ] && [ -n "$prod_total" ] && [ "$total" = "$prod_total" ]; then
-      echo "memory_total $total is IDENTICAL to the production brain's on :$PROD_PORT -- not isolated"
-      return 1
-    fi
-    echo "ready; memory_total=$total (production :$PROD_PORT=$prod_total)"
-  else
-    echo "ready; memory_total=$total (production :$PROD_PORT unreachable, so only the token proves isolation)"
-  fi
+# Prints the model /health names, and returns 0, ONLY for the one degraded
+# cause a load request can clear on a brain that is provably ours. The detail
+# text is the gateway's own ("model '<id>' not in /api/ps (cold start)", from
+# probe_llm_provider); a slow /api/tags is ALSO reported as "degraded" and is
+# not something loading fixes. Isolation is checked first so a cold brain that
+# serves the production store is refused at once, not loaded and waited on.
+_cold_start_model() {
+  local body state detail
+  body="$(_health_body "$PORT")"
+  [ -n "$body" ] || return 1
+  state="$(printf '%s' "$body" | _json_field llm_provider_state)"
+  [ "$state" = "degraded" ] || return 1
+  detail="$(printf '%s' "$body" | _json_field llm_provider_detail)"
+  case "$detail" in *"not in /api/ps (cold start)"*) ;; *) return 1 ;; esac
+  _isolation_verdict "$body" >/dev/null || return 1
+  printf '%s' "$body" | _json_field brain_model
   return 0
+}
+
+# AT MOST ONE LOAD REQUEST PER WAIT. WARM_STATE records the attempt, and every
+# later call answers from it instead of asking Ollama again.
+#   returns 0 -> a load was requested and succeeded; waiting can clear the state
+#   returns 1 -> not a cold start, or the attempt failed (reason in WARM_NOTE)
+# Not being cold does NOT use up the attempt: a just-launched brain answers
+# nothing at first and only reports the cold model a few polls later.
+WARM_STATE=""   # "" = nothing attempted in this wait | sent | failed | dry
+WARM_NOTE=""
+_rearm_cold_model() {
+  local model out
+  case "$WARM_STATE" in
+    sent) return 0 ;;
+    ?*) return 1 ;;
+  esac
+  model="$(_cold_start_model)" || return 1
+  if [ -z "$model" ]; then
+    WARM_STATE=failed
+    WARM_NOTE="cold start, but /health names no brain_model to load"
+  elif ! declare -F ollama_load_model >/dev/null 2>&1; then
+    WARM_STATE=failed
+    WARM_NOTE="cold start, but the loader is missing at $WARM_LIB"
+  elif [ "${TB_BENCH_BRAIN_PRINT_ONLY:-0}" = "1" ]; then
+    WARM_STATE=dry
+    WARM_NOTE="PRINT-ONLY -- would send ONE load request for '$model' to $(ollama_base_url)/api/generate (keep_alive ${TB_OLLAMA_WARM_KEEP_ALIVE:-2h}); nothing was sent"
+    echo "[bench-brain] $WARM_NOTE"
+    return 1
+  else
+    echo "[bench-brain] model '$model' is not loaded in Ollama (cold start) -- sending ONE load request to $(ollama_base_url)"
+    if out="$(ollama_load_model "$model")"; then
+      WARM_STATE=sent
+      WARM_NOTE="$out"
+      echo "[bench-brain] $out"
+      return 0
+    fi
+    WARM_STATE=failed
+    WARM_NOTE="load request FAILED: $out"
+  fi
+  echo "[bench-brain] $WARM_NOTE" >&2
+  return 1
+}
+
+# Never returns: exit 0 once :$PORT is usable, exit 2 after WAIT_S.
+_wait_until_usable() {
+  local deadline last=""
+  deadline=$(( $(date +%s) + WAIT_S ))
+  while [ "$(date +%s)" -lt "$deadline" ]; do
+    sleep 2
+    last="$(bench_brain_is_usable)"
+    if [ $? -eq 0 ]; then
+      echo "[bench-brain] UP on :$PORT -- $last"
+      exit 0
+    fi
+    _rearm_cold_model || true
+  done
+  # A load that returns after the deadline has not been looked at yet; one
+  # more poll costs a health probe, refusing a brain it just warmed costs a sweep.
+  if [ "$WARM_STATE" = "sent" ]; then
+    last="$(bench_brain_is_usable)"
+    if [ $? -eq 0 ]; then
+      echo "[bench-brain] UP on :$PORT -- $last"
+      exit 0
+    fi
+  fi
+  echo "[bench-brain] REFUSING: :$PORT did not become usable within ${WAIT_S}s." >&2
+  echo "[bench-brain] last state: $last" >&2
+  [ -z "$WARM_NOTE" ] || echo "[bench-brain] cold-start load: $WARM_NOTE" >&2
+  echo "[bench-brain] log tail ($ERR):" >&2
+  tail -n 20 "$ERR" 2>/dev/null >&2 || true
+  exit 2
 }
 
 reason="$(bench_brain_is_usable)"
@@ -137,7 +262,7 @@ usable=$?
 # CHECK-ONLY is how preflight-sweep.sh asks this question, so that the sweep's
 # pre-launch checklist and the sweep's own start-up agree on what "the bench
 # brain is usable" means by calling the SAME code rather than a second copy of
-# it that can drift.
+# it that can drift. It stays a pure question: it never loads a model.
 if [ "${TB_BENCH_BRAIN_CHECK_ONLY:-0}" = "1" ]; then
   echo "[bench-brain] :$PORT $reason"
   exit "$usable"
@@ -156,8 +281,18 @@ echo "[bench-brain] :$PORT not usable yet -- $reason"
 # guards (a brain started through copilot-start-mcp.mjs, serving the PRODUCTION
 # store on the bench port, measured 2026-08-31) is the one outcome learn mode
 # exists to prevent, because learn mode WRITES. Refuse and name the repair.
+#
+# THE ONE EXCEPTION IS AN ISOLATED BRAIN WHOSE MODEL IS COLD. It IS the brain we
+# want; Ollama has only unloaded its model. That is what the per-task re-check
+# finds after a long trial, and refusing it -- as this block did until
+# 2026-09-15 -- turned an expired keep_alive into a refused task. Load the model
+# and wait on the same loop a fresh launch uses. Nothing is started.
 if [ -n "$(_health_body "$PORT")" ]; then
+  if _rearm_cold_model; then
+    _wait_until_usable
+  fi
   echo "[bench-brain] REFUSING: :$PORT already answers /health but is not ready+isolated." >&2
+  [ -z "$WARM_NOTE" ] || echo "[bench-brain] cold-start load: $WARM_NOTE" >&2
   echo "[bench-brain] Starting a second process cannot take the port from the first one," >&2
   echo "[bench-brain] so the sweep would run against THIS brain. Stop it first:" >&2
   echo "[bench-brain]   bash $HERE/stop-bench-brain.sh" >&2
@@ -184,9 +319,6 @@ mkdir -p "$DATA"
 export TERRANSOUL_MCP_PORT="$PORT"
 export TERRANSOUL_MCP_DATA_DIR="$DATA"
 export TERRANSOUL_MCP_IDLE_TIMEOUT=0
-
-OUT="$DATA/bench-brain.out"
-ERR="$DATA/bench-brain.err"
 
 BIN_WIN="$(cygpath -w "$BIN" 2>/dev/null || printf '%s' "$BIN")"
 OUT_WIN="$(cygpath -w "$OUT" 2>/dev/null || printf '%s' "$OUT")"
@@ -215,19 +347,4 @@ if [ $rc -ne 0 ]; then
   exit $rc
 fi
 
-deadline=$(( $(date +%s) + WAIT_S ))
-last=""
-while [ "$(date +%s)" -lt "$deadline" ]; do
-  sleep 2
-  last="$(bench_brain_is_usable)"
-  if [ $? -eq 0 ]; then
-    echo "[bench-brain] UP on :$PORT -- $last"
-    exit 0
-  fi
-done
-
-echo "[bench-brain] REFUSING: :$PORT did not become usable within ${WAIT_S}s." >&2
-echo "[bench-brain] last state: $last" >&2
-echo "[bench-brain] log tail ($ERR):" >&2
-tail -n 20 "$ERR" 2>/dev/null >&2 || true
-exit 2
+_wait_until_usable

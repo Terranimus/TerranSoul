@@ -442,7 +442,23 @@ if [ "${TB_SKIP_WARMTH:-0}" != "1" ]; then
     # run. Only an inference request loads the weights, so send one.
     _warm_model="$(printf '%s' "$health_body" | sed -n '1p'       | node -e 'let d="";process.stdin.on("data",c=>d+=c).on("end",()=>{try{const j=JSON.parse(d);console.log(String(j.brain_model||""))}catch(e){console.log("")}})' 2>/dev/null || echo '')"
     if [ -n "$_warm_model" ]; then
-      curl -s -m 180 "${OLLAMA_HOST:-http://127.0.0.1:11434}/api/generate"         -H 'content-type: application/json'         -d "{\"model\":\"$_warm_model\",\"prompt\":\"ok\",\"stream\":false,\"keep_alive\":\"30m\"}"         >/dev/null 2>&1 || true
+      # ONE LOADER. The request lives in ollama-warm.sh, shared with
+      # start-bench-brain.sh, whose readiness wait saw this same cold-start
+      # state and never sent a load at all -- MEASURED 2026-09-15 16:02: its
+      # 300 s wait expired and the sweep ran zero trials. A copy here and a
+      # copy there is how that gap opened. A failed load now also says why,
+      # where `>/dev/null 2>&1 || true` used to swallow it.
+      if [ -f "$HERE/ollama-warm.sh" ]; then
+        # shellcheck source=ollama-warm.sh
+        . "$HERE/ollama-warm.sh"
+        if _warm_out="$(ollama_load_model "$_warm_model")"; then
+          echo "[run-dg] $_warm_out"
+        else
+          echo "[run-dg] cold-start load request failed: $_warm_out" >&2
+        fi
+      else
+        echo "[run-dg] cannot load '$_warm_model': no loader at $HERE/ollama-warm.sh" >&2
+      fi
     fi
     sleep 15
     health_body="$(curl -s -m 10 -w '\n%{http_code}' "http://127.0.0.1:$BRAIN_PORT/health" || true)"
