@@ -68,7 +68,8 @@ import {
 } from 'node:fs'
 import { join, dirname, basename } from 'node:path'
 import { createHash } from 'node:crypto'
-import { runWasSound, isCleanPass } from './trial-outcome.mjs'
+import { runWasSound, isCleanPass, classifyTrial } from './trial-outcome.mjs'
+import { readHarnessStamp } from './harness-stamp.mjs'
 import {
   extractDeliverables,
   bashCommandsIn,
@@ -774,6 +775,27 @@ export function forensicsForTrial(trialDir, opts = {}) {
     errors.push(`baseline search failed: ${e?.message ?? e}`)
   }
 
+  // ⛔ THE CLASS AND THE ERA, RECORDED WHEN THE TRIAL FINISHES. MEASURED
+  // 2026-09-15: a 102-trial "own check passed, grader failed" taxonomy counted 6
+  // trials whose every grader test PASSED (zeroed by an exception) and 1 whose
+  // tests never ran, and no row said which harness commit it ran under — so every
+  // reach number needed a hand re-classification and a git-log date guess. New
+  // rows carry both; old rows are never rewritten (backfill-harness-era.mjs
+  // estimates their era into a sidecar instead). `harness` is the job's EXACT
+  // stamp or null — never an estimate, which would be a guess stored as a fact.
+  let outcome
+  try {
+    outcome = classifyTrial({ result: result ?? undefined, trialDir: dir })
+  } catch (e) {
+    errors.push(`outcome classification failed: ${e?.message ?? e}`)
+    outcome = { class: 'ungraded-other', reason: 'classifier-error', evidence: [], exceptionType: null, reward: null }
+  }
+  const stamp = readHarnessStamp(jobDir)
+  const harness =
+    stamp && typeof stamp.commit === 'string' && stamp.commit
+      ? { commit: stamp.commit, dirty: stamp.dirty ?? null, driver_matches_head: stamp.driver?.matches_head ?? null }
+      : null
+
   const spans = trajectory ? writeTimeline(trajectory) : new Map()
   const suspects = suspectsFor({
     reward,
@@ -801,6 +823,13 @@ export function forensicsForTrial(trialDir, opts = {}) {
     sound,
     void: isVoid,
     exception: result?.exception_info?.exception_type ?? readException(dir)?.kind ?? null,
+    outcome: {
+      class: outcome.class,
+      reason: outcome.reason,
+      evidence: outcome.evidence,
+      exception_type: outcome.exceptionType,
+    },
+    harness,
     tokens: {
       input: result?.agent_result?.n_input_tokens ?? jobResult?.stats?.n_input_tokens ?? null,
       output: outTokens,
@@ -851,6 +880,12 @@ export function indexLine(record) {
     reward: record.reward,
     sound: record.sound,
     void: record.void,
+    outcome_class: record.outcome?.class ?? null,
+    outcome_reason: record.outcome?.reason ?? null,
+    // The exception behind the class (api-cutoff-ungraded, exception-zeroed-…),
+    // so a class read back from the index keeps its cause.
+    outcome_exception: record.outcome?.exception_type ?? null,
+    harness_commit: record.harness?.commit ?? null,
     failed: record.checks.failed.map((c) => ({
       name: c.name,
       values: c.values,
@@ -891,6 +926,12 @@ export function renderMarkdown(r) {
       `${r.exception ? ` · exception \`${r.exception}\`` : ''} · ` +
       `${r.tokens.output ?? '?'} output tokens · ${r.checks.passed}/${r.checks.total} checks passed`,
   )
+  if (r.outcome) {
+    L.push('')
+    L.push(
+      `class **${r.outcome.class}** (\`${r.outcome.reason}\`) · harness ${r.harness ? `\`${r.harness.commit.slice(0, 10)}\`` : 'unstamped'}`,
+    )
+  }
   L.push('')
   if (r.checks.failed.length) {
     L.push('## failed checks')

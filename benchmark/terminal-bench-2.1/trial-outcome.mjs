@@ -28,7 +28,23 @@
  * wrong. A trial's outcome is a JOINT reading of what the grader said and
  * whether the run was sound. Neither field alone is the answer, so neither is
  * read alone here.
+ *
+ * `classifyTrial` (bottom of this file) extends the same joint reading to the
+ * trial's DIRECTORY — the agent's evidence of work and the verifier's own
+ * output — and names exactly one outcome class per trial. The evidence readers
+ * live in `trial-evidence.mjs`; the decision lives here, beside the pass
+ * definition it must never contradict.
  */
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
+import {
+  agentProducedWork,
+  agentOutput,
+  exceptionEvidence,
+  readVerifierEvidence,
+  pytestSignals,
+  clipEvidence,
+} from './trial-evidence.mjs'
 
 /** Errors that mean the RUN broke, not that the agent was wrong. */
 export const INFRA_ERRORS = new Set([
@@ -154,4 +170,400 @@ export function tally(results) {
     else t.fail++
   }
   return t
+}
+
+// ── OUTCOME CLASSES ─────────────────────────────────────────────────────────
+
+/**
+ * The seven things a finished trial can be. EXACTLY one applies.
+ *
+ * ⛔ WHY A CLASS, NOT ANOTHER BOOLEAN — MEASURED 2026-09-15 (workflow
+ * wf_dba5b1f9-a84, critic verdict). A taxonomy of 102 "the agent's own last
+ * check passed but the grader failed" trials ranked 17 proposed gates by how
+ * many trials each covered. Six of the 102 had EVERY grader test passing and
+ * were zeroed by AgentTimeoutError (5) or UnknownApiError (1); a seventh never
+ * executed its tests ("uvx: command not found" in the verifier's own output,
+ * then `reward.txt = 0`). `outcomeOf` already held the facts for the six —
+ * `reward: 1, counted: 0` — but nothing turned them into a label a taxonomy
+ * can filter on, so every count was polluted the same way, and
+ * `campaign-report.mjs`'s `classify` still files that shape under 'capability'
+ * (outcome-class.test.mjs pins the contrast).
+ *
+ * ⛔ ONE CLASS, ONE MEANING — MEASURED 2026-09-15 (adversarial review, 1383
+ * in-scope trials). 'verifier-never-ran' held 17 trials and only ONE was a
+ * verifier that failed before its tests (a tool/network failure in its own
+ * output). Thirteen were agent runs cut off by ApiRateLimitError (12) or
+ * UnknownApiError (1) with no grade, and three were AddTestsDirError. Meanwhile
+ * 22 graded zeros under the same two cut-offs sat in 'ungraded-other'. So one
+ * cause was split across two classes, and one of those classes also held a
+ * different cause. The cut-offs now share one class under one rule, and
+ * 'verifier-never-ran' needs evidence that the verifier started.
+ *
+ * THE ORDER IS THE DEFINITION, so it is written down once, here:
+ *
+ *   1. clean-pass                      `isCleanPass`, the campaign's pass, unchanged
+ *   2. non-run                         no agent work (merge-sweep's three evidence
+ *                                      sources) AND no grade or an explicit
+ *                                      zero-token count
+ *   3. exception-zeroed-grader-passed  reward > 0, and an exception scores it 0
+ *   4. api-cutoff-ungraded             an exception in RUN_BROKE_AROUND_AGENT and
+ *                                      no usable grade: a zero, or none at all
+ *   5. verifier-never-ran              the verifier STARTED and failed before any
+ *                                      test ran: a tool/network failure in its own
+ *                                      output, no tests collected, or a harness
+ *                                      exception raised in that window
+ *                                      (VERIFIER_SETUP_ERRORS) with no verifier file
+ *   6. capability-fail                 graded 0, tests ran, some failed, no
+ *                                      exception that broke the run around the agent
+ *   7. ungraded-other                  everything else, with its reason
+ *
+ * When result.json cannot be read at all, `classifyUnreadable` decides instead,
+ * from what survives without it; it can only say clean-pass, non-run or
+ * ungraded-other.
+ *
+ * `counted`, `isCleanPass` and `tally` are NOT changed by any of this: the
+ * headline rule (errored trials score 0 and are never excluded) stands. A class
+ * answers a different question — what KIND of non-pass was it — for the readers
+ * that rank causes and measure a gate's reach.
+ */
+export const OUTCOME_CLASS = Object.freeze({
+  CLEAN_PASS: 'clean-pass',
+  CAPABILITY_FAIL: 'capability-fail',
+  EXCEPTION_ZEROED_GRADER_PASSED: 'exception-zeroed-grader-passed',
+  VERIFIER_NEVER_RAN: 'verifier-never-ran',
+  API_CUTOFF_UNGRADED: 'api-cutoff-ungraded',
+  NON_RUN: 'non-run',
+  UNGRADED_OTHER: 'ungraded-other',
+})
+
+/**
+ * Exceptions after which a graded zero says nothing about capability, because
+ * the run broke AROUND the agent: the API cut-offs `runWasSound` already
+ * excludes, plus a setup timeout, which `campaign-report.mjs`'s
+ * RETRYABLE_ERRORS and run-sweep.sh's measured policy both treat as a retry.
+ *
+ * ⛔ AgentTimeoutError IS ABSENT, for the reason written on API_CUTOFFS: 35 of 43
+ * errored graded zeros (2026-09-08) were the agent spending its whole budget,
+ * which is a capability failure. The class says so and the reason discloses the
+ * exception (`…:with-AgentTimeoutError`), so a reader can still split it out.
+ */
+export const RUN_BROKE_AROUND_AGENT = new Set([...API_CUTOFFS, 'AgentSetupTimeoutError'])
+
+/**
+ * Harness exceptions raised INSIDE the verifier step and BEFORE its test script
+ * executes. With no verifier file on disk, one of these shows that the verifier
+ * started and that no test ran.
+ *
+ * Read from harbor's source, not inferred from outcomes: `Verifier.verify`
+ * (harbor/verifier/verifier.py) uploads the tests directory, raises
+ * AddTestsDirError when that fails, and only after that executes the test
+ * script. DownloadVerifierDirError and RewardFileNotFoundError are raised AFTER
+ * the script ran, so they are deliberately absent: their tests may have run.
+ */
+export const VERIFIER_SETUP_ERRORS = new Set(['AddTestsDirError'])
+
+/** How long result.json says the verifier phase lasted, as one evidence line. */
+function verifierPhase(result) {
+  const ms = (t) => Date.parse(String(t ?? '').replace(/(\.\d{3})\d+/, '$1'))
+  const s = ms(result?.verifier?.started_at)
+  const f = ms(result?.verifier?.finished_at)
+  return Number.isFinite(s) && Number.isFinite(f)
+    ? `verifier phase lasted ${((f - s) / 1000).toFixed(3)} s`
+    : 'no verifier phase timing in result.json'
+}
+
+const NO_VERIFIER = Object.freeze({
+  stdoutPresent: false,
+  rewardTxtPresent: false,
+  rewardTxt: null,
+  ctrf: null,
+  pytest: pytestSignals(''),
+  toolFailures: [],
+  outputFiles: [],
+})
+
+function testsRan(v) {
+  if (v.ctrf && v.ctrf.total > 0) return true
+  if ((v.pytest.collected ?? 0) > 0) return true
+  const c = v.pytest.counts
+  return c.passed + c.failed + c.errors > 0
+}
+
+function failedTests(v) {
+  return Math.max(v.ctrf ? v.ctrf.failed : 0, v.pytest.counts.failed + v.pytest.counts.errors)
+}
+
+function describeTests(v) {
+  if (v.ctrf && v.ctrf.total > 0) return `ctrf ${v.ctrf.passed}/${v.ctrf.total} passed`
+  if (v.pytest.summary) return `pytest summary: ${v.pytest.summary}`
+  if (v.pytest.collected !== null) return `pytest collected ${v.pytest.collected} items`
+  return v.stdoutPresent ? 'verifier/test-stdout.txt has no pytest session' : 'no verifier/test-stdout.txt'
+}
+
+/**
+ * The class decision over facts already read. Pure — `classifyTrial` gathers
+ * the facts; this is exported so a reader holding them need not re-read disk.
+ *
+ * @param {{result: object|null, work?: {worked: boolean, evidence: string},
+ *          verifier?: ReturnType<typeof readVerifierEvidence>|null}} facts
+ * @returns {{class: string, reason: string, evidence: string[],
+ *            exceptionType: string|null, reward: number|null}}
+ */
+export function classifyFacts({ result, work, verifier }) {
+  const o = outcomeOf(result)
+  const v = verifier ?? NO_VERIFIER
+  const w = work ?? { worked: false, evidence: 'no agent-work evidence supplied' }
+  const exc = o.exceptionType
+  const excLine = exc ? `exception ${exc}: ${String(result?.exception_info?.exception_message ?? '')}` : null
+  const tokens = result?.agent_result?.n_output_tokens
+  const rewardLine = `verifier_result reward ${o.reward ?? 'absent'}`
+  const make = (cls, reason, evidence) => ({
+    class: cls,
+    reason,
+    evidence: evidence.filter((e) => e != null && e !== '').map(clipEvidence),
+    exceptionType: exc,
+    reward: o.reward,
+  })
+  const C = OUTCOME_CLASS
+
+  if (isCleanPass(result)) return make(C.CLEAN_PASS, 'graded-pass-no-exception', [rewardLine, describeTests(v)])
+
+  // A GRADED trial needs an explicit zero count to be a non-run: an ABSENT
+  // count is not a count of zero, and a trial with no evidence files at all
+  // must not be deleted from the capability column on absence alone — the same
+  // fail-safe direction `runWasSound` takes.
+  if (!w.worked && (o.reward === null || tokens === 0)) {
+    return make(C.NON_RUN, 'no-output-tokens-no-agent-step', [
+      w.evidence,
+      `agent_result.n_output_tokens ${tokens ?? 'absent'}`,
+      rewardLine,
+      excLine,
+    ])
+  }
+
+  if (o.reward !== null && o.reward > 0 && o.errored) {
+    return make(C.EXCEPTION_ZEROED_GRADER_PASSED, `grader-passed-exception-zeroed:${exc}`, [
+      rewardLine,
+      describeTests(v),
+      excLine,
+    ])
+  }
+
+  // 4. AN API CUT-OFF WITH NO USABLE GRADE. Checked BEFORE the verifier
+  // branches on purpose: the run broke around the agent first, so whatever the
+  // verifier did afterwards does not name the trial (its tool failures stay in
+  // the evidence). A reward.txt > 0 that result.json did not record is not
+  // called unusable here; the branches below report it.
+  if (
+    exc &&
+    RUN_BROKE_AROUND_AGENT.has(exc) &&
+    (o.reward === null || o.reward === 0) &&
+    !(typeof v.rewardTxt === 'number' && v.rewardTxt > 0)
+  ) {
+    let reason = `no-grade-under-run-breaking-exception:${exc}`
+    if (o.reward === 0) reason = `graded-zero-under-run-breaking-exception:${exc}`
+    else if (!v.stdoutPresent && !v.rewardTxtPresent) reason = `no-test-output-and-no-reward:after-${exc}`
+    return make(C.API_CUTOFF_UNGRADED, reason, [rewardLine, describeTests(v), excLine, w.evidence, ...v.toolFailures])
+  }
+
+  const ran = testsRan(v)
+  if (!ran) {
+    if (v.toolFailures.length && !v.pytest.session && v.pytest.collected === null) {
+      return make(C.VERIFIER_NEVER_RAN, 'tool-or-network-failure-before-tests', [
+        ...v.toolFailures,
+        'no pytest session banner',
+        'no collected-items line',
+        rewardLine,
+      ])
+    }
+    if (v.pytest.collected === 0 || v.pytest.noTestsRan) {
+      return make(C.VERIFIER_NEVER_RAN, 'no-tests-collected', [describeTests(v), rewardLine])
+    }
+    if (!v.stdoutPresent && o.reward === null && !v.rewardTxtPresent) {
+      if (exc && VERIFIER_SETUP_ERRORS.has(exc) && !v.ctrf && !(v.outputFiles ?? []).length) {
+        return make(C.VERIFIER_NEVER_RAN, 'harness-setup-before-tests', [
+          excLine,
+          verifierPhase(result),
+          'verifier/ holds no file',
+          'no reward in result.json or verifier/reward.txt',
+        ])
+      }
+      // No verifier output, and no exception that places the failure inside the
+      // verifier step: nothing shows the verifier started, so this is NOT
+      // verifier-never-ran.
+      return make(
+        C.UNGRADED_OTHER,
+        exc ? `no-test-output-and-no-reward:after-${exc}` : 'no-test-output-and-no-reward',
+        ['no verifier/test-stdout.txt', 'no reward in result.json or verifier/reward.txt', excLine, w.evidence],
+      )
+    }
+  }
+
+  if (o.graded && o.reward === 0) {
+    if (ran && failedTests(v) > 0) {
+      return make(
+        C.CAPABILITY_FAIL,
+        exc ? `grader-ran-tests-some-failed:with-${exc}` : 'grader-ran-tests-some-failed',
+        [rewardLine, describeTests(v), w.evidence, excLine],
+      )
+    }
+    if (ran) return make(C.UNGRADED_OTHER, 'graded-zero-no-failed-test-recorded', [rewardLine, describeTests(v)])
+    return make(C.UNGRADED_OTHER, 'graded-zero-without-test-evidence', [rewardLine, describeTests(v), w.evidence])
+  }
+
+  if (!o.graded) {
+    if (ran) {
+      return make(C.UNGRADED_OTHER, 'tests-ran-but-no-reward-recorded', [
+        describeTests(v),
+        v.rewardTxtPresent ? `verifier/reward.txt ${v.rewardTxt}` : 'no verifier/reward.txt',
+        excLine,
+      ])
+    }
+    return make(C.UNGRADED_OTHER, exc ? `ungraded-after-exception:${exc}` : 'ungraded-no-exception', [
+      describeTests(v),
+      w.evidence,
+      excLine,
+    ])
+  }
+  return make(C.UNGRADED_OTHER, 'unrecognised-reward', [rewardLine])
+}
+
+/**
+ * The class of a trial whose result.json could not be read, decided from what
+ * survives without it. Pure: `classifyTrial` gathers the facts.
+ *
+ * ⛔ THE DEFECT THIS CLOSES — MEASURED 2026-09-15 (adversarial review of this
+ * layer, full corpus). classifyTrial returned 'result-json-unreadable' before
+ * opening any other file of the trial. 33 in-scope trials have no result.json
+ * (every one ENOENT). Two of them carry a graded pass: verifier/reward.txt 1
+ * with every pytest test passing, 2/2 and 7/7. Eighteen left no agent output
+ * and no verifier output at all. All 33 were filed as ungraded-other, so two
+ * passes and eighteen non-runs sat in the class a reader skips.
+ *
+ * NEVER A GUESS. Three rules, in order:
+ *
+ *   1. GRADED-PASS EVIDENCE is verifier/reward.txt > 0 CORROBORATED by a test
+ *      run in which no test failed. A lone reward.txt is not enough, because a
+ *      stale one is a measured shape (`runWasSound`: reward.txt 1 left behind by
+ *      a container that never came up). It is a clean pass only when there is
+ *      no exception evidence (`exceptionEvidence`). With exception evidence it
+ *      is ungraded-other, and the reason says so.
+ *   2. NO AGENT OUTPUT AND NO VERIFIER OUTPUT is a non-run. Agent output is
+ *      `agentOutput`, which counts the agent's raw stdout, so a run that wrote
+ *      anything is never removed from the record on absence alone.
+ *   3. Everything else is ungraded-other, reason 'result-json-unreadable'. That
+ *      includes a graded zero: with no result.json there is nothing to say
+ *      whether the run was sound, so it is never read as a capability failure.
+ *
+ * `reward` here is verifier/reward.txt, the only grade left to read.
+ *
+ * @param {{why?: string|null, agent?: {present: boolean, evidence: string},
+ *          verifier?: ReturnType<typeof readVerifierEvidence>|null,
+ *          exceptions?: string[]}} facts
+ */
+export function classifyUnreadable({ why = null, agent, verifier, exceptions = [] }) {
+  const v = verifier ?? NO_VERIFIER
+  const a = agent ?? { present: false, evidence: 'no agent-output evidence supplied' }
+  const whyLine = `result.json unreadable${why ? `: ${why}` : ''}`
+  const rewardLine = v.rewardTxtPresent ? `verifier/reward.txt ${v.rewardTxt ?? 'unparseable'}` : 'no verifier/reward.txt'
+  const reward = typeof v.rewardTxt === 'number' ? v.rewardTxt : null
+  const make = (cls, reason, evidence) => ({
+    class: cls,
+    reason,
+    evidence: evidence.filter((e) => e != null && e !== '').map(clipEvidence),
+    exceptionType: null,
+    reward,
+  })
+  const C = OUTCOME_CLASS
+
+  if (reward !== null && reward > 0 && testsRan(v) && failedTests(v) === 0) {
+    if (!exceptions.length) {
+      return make(C.CLEAN_PASS, 'graded-pass-no-exception:result-json-unreadable', [
+        rewardLine,
+        describeTests(v),
+        'no exception.txt and no failed agent command in the host capture',
+        a.evidence,
+        whyLine,
+      ])
+    }
+    return make(C.UNGRADED_OTHER, 'result-json-unreadable:graded-pass-with-exception-evidence', [
+      rewardLine,
+      describeTests(v),
+      ...exceptions,
+      whyLine,
+    ])
+  }
+
+  const verifierFiles = v.outputFiles ?? []
+  if (!a.present && !verifierFiles.length) {
+    return make(C.NON_RUN, 'result-json-unreadable:no-agent-output-no-verifier-output', [
+      a.evidence,
+      'no non-empty file in verifier/',
+      ...exceptions,
+      whyLine,
+    ])
+  }
+
+  return make(C.UNGRADED_OTHER, 'result-json-unreadable', [
+    whyLine,
+    a.evidence,
+    verifierFiles.length ? `verifier/ holds ${verifierFiles.join(', ')}` : 'no non-empty file in verifier/',
+    rewardLine,
+    describeTests(v),
+    ...exceptions,
+  ])
+}
+
+/**
+ * The outcome class of one finished trial.
+ *
+ * @param {string|{result?: object, trialDir?: string, verifierDir?: string}} input
+ *   a trial directory, or a parsed result.json plus where its verifier output
+ *   and agent evidence live. Reads files under that ONE trial only.
+ */
+export function classifyTrial(input) {
+  let trialDir = null
+  let result
+  let verifierDir = null
+  if (typeof input === 'string') {
+    trialDir = input.replace(/[/\\]+$/, '')
+  } else if (input && typeof input === 'object') {
+    trialDir = input.trialDir ?? null
+    result = input.result
+    verifierDir = input.verifierDir ?? null
+  }
+  if (result === undefined) {
+    let readError = null
+    if (trialDir) {
+      try {
+        result = JSON.parse(readFileSync(join(trialDir, 'result.json'), 'utf8'))
+      } catch (e) {
+        readError = String(e?.message ?? e)
+      }
+    }
+    if (result === undefined) {
+      if (!trialDir) {
+        return {
+          class: OUTCOME_CLASS.UNGRADED_OTHER,
+          reason: 'result-json-unreadable',
+          evidence: [clipEvidence('no trial directory and no parsed result')],
+          exceptionType: null,
+          reward: null,
+        }
+      }
+      // ⛔ NOT A SHORT-CIRCUIT: the rest of the trial still speaks (classifyUnreadable).
+      return classifyUnreadable({
+        why: readError,
+        agent: agentOutput(trialDir),
+        verifier: readVerifierEvidence(verifierDir ?? join(trialDir, 'verifier')),
+        exceptions: exceptionEvidence(trialDir),
+      })
+    }
+  }
+  if (!verifierDir && trialDir) verifierDir = join(trialDir, 'verifier')
+  return classifyFacts({
+    result,
+    work: agentProducedWork(trialDir, result),
+    verifier: verifierDir ? readVerifierEvidence(verifierDir) : null,
+  })
 }

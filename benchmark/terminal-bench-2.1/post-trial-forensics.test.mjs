@@ -470,6 +470,86 @@ test('writing a forensics record does not touch verifier/ or agent/', () => {
   rmSync(box, { recursive: true, force: true })
 })
 
+test('a NEW index row carries its outcome class and its job’s exact harness commit; old rows are untouched', () => {
+  // ⛔ FAILS ON THE PRE-CHANGE TREE: `indexLine` wrote neither field, so every
+  // row had to be re-classified by hand and its era guessed from git-log dates
+  // before it could be counted — the 2026-09-15 confound, where 6 of 102
+  // "failures" had every grader test passing and each mechanism reached only
+  // 0-6 trials once pre-fix trials were removed.
+  const box = tmp()
+  const jobs = join(box, 'jobs')
+  const OLD_ROW = '{"schema":1,"trial":"older-task__x","job":"old","reward":0}'
+  write(join(jobs, INDEX_FILE), `${OLD_ROW}\n`)
+
+  // reward 1 + AgentTimeoutError with every grader test passing, in a stamped job
+  const stamped = makeTrial({
+    root: jobs,
+    job: 'jobStamped',
+    task: 'demo-task',
+    trial: 'demo-task__ez',
+    reward: '1',
+    result: { exception_info: { exception_type: 'AgentTimeoutError', exception_message: 'timed out after 900.0 seconds' } },
+    ctrf: [{ name: 'test_x.py::test_a', status: 'passed' }],
+    stdout: '===== test session starts =====\ncollected 1 item\n===== 1 passed in 0.10s =====\n',
+  })
+  write(join(jobs, 'jobStamped', 'harness.json'), JSON.stringify({ commit: 'a'.repeat(40), dirty: false }))
+  // an ordinary graded failure, in a job launched before stamping existed
+  const unstamped = makeTrial({
+    root: jobs,
+    job: 'jobUnstamped',
+    task: 'demo-task',
+    trial: 'demo-task__cf',
+    reward: '0',
+    ctrf: [{ name: 'test_x.py::test_a', status: 'failed', trace: 'E   assert 1 == 2' }],
+    stdout: '===== test session starts =====\ncollected 1 item\n===== 1 failed in 0.10s =====\n',
+  })
+
+  const r1 = forensicsForTrial(stamped, { base: jobs, baselineBase: box })
+  const r2 = forensicsForTrial(unstamped, { base: jobs, baselineBase: box })
+
+  const lines = readFileSync(join(jobs, INDEX_FILE), 'utf8').trim().split('\n')
+  assert.equal(lines[0], OLD_ROW, 'an existing row is never rewritten')
+  const [a, b] = lines.slice(1).map((l) => JSON.parse(l))
+  assert.equal(a.outcome_class, 'exception-zeroed-grader-passed')
+  assert.equal(a.outcome_reason, 'grader-passed-exception-zeroed:AgentTimeoutError')
+  assert.equal(a.harness_commit, 'a'.repeat(40))
+  assert.equal(b.outcome_class, 'capability-fail')
+  assert.equal(b.harness_commit, null, 'no stamp -> null, never an estimate in the index')
+  // and the per-trial record agrees with its index row
+  assert.equal(r1.outcome.class, a.outcome_class)
+  assert.equal(r1.harness.commit, 'a'.repeat(40))
+  assert.equal(r2.harness, null)
+  assert.deepEqual(r1.errors, [])
+  rmSync(box, { recursive: true, force: true })
+})
+
+test('a forensics row names an API cut-off with no usable grade api-cutoff-ungraded, and carries its exception', () => {
+  // ⛔ FAILS ON THE PRE-CHANGE TREE: the class did not exist, so this row said
+  // 'ungraded-other' — the class of 22 such graded zeros on 2026-09-15, while
+  // 13 ungraded ones sat in 'verifier-never-ran'. The row also had no exception
+  // field, so a class read back from the index lost what made it that class.
+  const box = tmp()
+  const jobs = join(box, 'jobs')
+  const dir = makeTrial({
+    root: jobs,
+    job: 'jobCut',
+    task: 'demo-task',
+    trial: 'demo-task__cut',
+    reward: '0',
+    result: { exception_info: { exception_type: 'ApiRateLimitError', exception_message: 'Command failed (exit 137)' } },
+    ctrf: [{ name: 'test_x.py::test_a', status: 'failed', trace: 'E   assert 1 == 2' }],
+    stdout: '===== test session starts =====\ncollected 1 item\n===== 1 failed in 0.10s =====\n',
+  })
+  const r = forensicsForTrial(dir, { base: jobs, baselineBase: box })
+  const row = JSON.parse(readFileSync(join(jobs, INDEX_FILE), 'utf8').trim())
+  assert.equal(row.outcome_class, 'api-cutoff-ungraded')
+  assert.equal(row.outcome_reason, 'graded-zero-under-run-breaking-exception:ApiRateLimitError')
+  assert.equal(row.outcome_exception, 'ApiRateLimitError')
+  assert.equal(r.outcome.class, row.outcome_class)
+  assert.equal(r.outcome.exception_type, 'ApiRateLimitError')
+  rmSync(box, { recursive: true, force: true })
+})
+
 // ── supporting rules ────────────────────────────────────────────────────────
 test('a trivial literal is not a fitted constant', () => {
   // FAILS without the materiality bar. Measured on the first real trial this

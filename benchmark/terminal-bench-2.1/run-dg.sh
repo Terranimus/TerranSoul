@@ -1774,6 +1774,47 @@ fi
 
 echo "[run-dg] job=$JOB tasks=${TB_TASKS:-${TASK:-<all>}} attempts=$ATTEMPTS concurrency=$CONCURRENCY defer=${TB_DEFER_WRITES:-0}"
 echo "[run-dg] credential: CLAUDE_CODE_OAUTH_TOKEN (${#CLAUDE_CODE_OAUTH_TOKEN} chars, not echoed)"
+
+# ── HARNESS IDENTITY: WHICH HARNESS DID THIS JOB RUN UNDER? ──────────────────
+# Nothing recorded it. MEASURED 2026-09-15: every failure cluster in a 102-trial
+# taxonomy already had a shipped harness fix, so each mechanism could only be
+# counted over trials that ran AFTER its fix — and that era had to be rebuilt by
+# hand from git-log dates. harness-stamp.mjs has the full argument.
+#
+# CAPTURED HERE, immediately before harbor launches, because this script may be
+# a SNAPSHOT taken at sweep start (run-two-workers.sh copies only run-dg.sh)
+# while every "$HERE/..." file it calls is read LIVE. The identity that describes
+# this job is therefore the live tree at this moment, plus a hash of the copy
+# actually executing ("${BASH_SOURCE[0]}") compared against the committed one.
+#
+# PLACED into $JOB_DIR only after harbor has created that directory (below, and
+# before forensics joins each record to it). Creating the job dir first would
+# make a harbor that dies at start-up look like a real job to run-two-workers.sh,
+# which reads "no job dir" as "run-dg.sh refused before harbor ran".
+#
+# Advisory, exactly like forensics: guarded, status discarded, never gates. A
+# missing git or a non-repository becomes commit:null plus a reason in the file.
+harness_stamp_capture() {
+  local _here="$1" _home="$2" _driver="$3" _job="$4" _tmp
+  [ "${TB_SKIP_HARNESS_STAMP:-0}" = "1" ] && return 0
+  _tmp="$(mktemp -t tb-harness-XXXXXX 2>/dev/null)" || return 0
+  node "$_here/harness-stamp.mjs" capture --home "$_home" --driver "$_driver" --job "$_job" --out "$_tmp" \
+    >/dev/null 2>&1 || true
+  printf '%s' "$_tmp"
+  return 0
+}
+
+harness_stamp_place() {
+  local _here="$1" _captured="$2" _job_dir="$3"
+  [ -n "$_captured" ] || return 0
+  node "$_here/harness-stamp.mjs" place --captured "$_captured" --home "$_here" --out "$_job_dir/harness.json" 2>&1 \
+    | sed 's/^/[harness] /' || true
+  rm -f "$_captured" 2>/dev/null || true
+  return 0
+}
+
+HARNESS_CAPTURED="$(harness_stamp_capture "$HERE" "$HERE" "${BASH_SOURCE[0]}" "$JOB")"
+
 # ⛔ CAPTURE THE EXIT CODE; DO NOT LET `set -e` END THE SCRIPT HERE.
 #
 # This file runs under `set -euo pipefail`, so a non-zero harbor exit used to
@@ -1814,6 +1855,11 @@ fi
 # is worse than a crash, because the natural next step is to debug the run rather
 # than the reporter.
 JOB_DIR="${TB_JOBS_DIR:-$HERE/jobs}/$JOB"
+
+# The harness identity captured before harbor launched (see
+# harness_stamp_capture) goes into the job dir harbor created — here, after the
+# directory exists and before forensics joins each new record to it.
+harness_stamp_place "$HERE" "$HARNESS_CAPTURED" "$JOB_DIR"
 
 echo
 echo "[run-dg] ── question 1: did the task pass? ──────────────────────────────"
