@@ -55,6 +55,11 @@
 import { readFileSync, existsSync, readdirSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { STOP_FEEDBACK_PREFIX, JUDGE_BLOCK_PREFIX, LEDGER_BLOCK_PREFIX } from '../../packages/terransoul-cli/src/stop-hook.mjs'
+// From the module that EMITS it. `stop-hook.mjs` does not re-export this one
+// (it is over its `max-lines` budget), and importing from the emitter is the
+// shorter path regardless — the point of the import is that the prefix is
+// never hand-copied here.
+import { FORMAT_BLOCK_PREFIX } from '../../packages/terransoul-cli/src/quoted-format.mjs'
 import { judgeClaimAnchor, goalIsAnchorable } from '../../packages/terransoul-cli/src/judge-anchor.mjs'
 import { outcomeOf } from './trial-outcome.mjs'
 // ONE formatter for a probability, shared with the watch that wrote the rows:
@@ -83,11 +88,29 @@ export function isStopBlockTurn(event) {
   return turnText(event).includes(STOP_FEEDBACK_PREFIX)
 }
 
-/** Which half of the hook blocked: the judge, the ledger, or an unrecognised shape. */
+/**
+ * Which half of the hook blocked: the judge, the ledger, the quoted-format
+ * check, or an unrecognised shape.
+ *
+ * ORDER IS LOAD-BEARING and it is the same rule `countPriorStopBlocksByKind`
+ * states: a reason carrying more than one prefix is attributed to the gate that
+ * DECIDED it, and `formatNote` rides the judge's and the ledger's blocks as an
+ * extra paragraph. So `format` is tested LAST, and it is reached only by a
+ * block the format check issued on its own -- which is the population a census
+ * of this signal has to count.
+ *
+ * ⛔ THE PREFIX IS IMPORTED, NEVER RE-SPELLED. This file's header records why
+ * the `judgeClaimAnchor` import is deliberately hard: an earlier version read a
+ * marker constant through a placeholder fallback, so when the constant moved the
+ * whole column read 0 forever while looking measured. A hand-copied prefix here
+ * would fail exactly that way -- silently, and only in the direction that
+ * under-reports.
+ */
 export function blockKind(event) {
   const t = turnText(event)
   if (t.includes(JUDGE_BLOCK_PREFIX)) return 'judge'
   if (t.includes(LEDGER_BLOCK_PREFIX)) return 'ledger'
+  if (t.includes(FORMAT_BLOCK_PREFIX)) return 'format'
   return 'other'
 }
 

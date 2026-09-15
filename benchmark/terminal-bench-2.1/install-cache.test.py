@@ -205,7 +205,12 @@ with tempfile.TemporaryDirectory() as tmp:
     s = FakeSelf(fresh)
     run(populate(s, FakeEnv(s)))
     check("cache now exists", True, (fresh / "bin" / "claude").exists())
-    check("no .partial left behind", False, fresh.with_name(fresh.name + ".partial").exists())
+    # GLOB, not one fixed name: the staging path now carries the pid (see the
+    # concurrency case at the bottom), and asserting the old fixed
+    # `<name>.partial` would be asserting the absence of a path nothing creates
+    # any more -- a check that can no longer fail.
+    check("no staging dir left behind", [],
+          sorted(p.name for p in fresh.parent.glob(fresh.name + ".partial*")))
 
     print("== a capture that yields no agent is discarded, not published ==")
     bad = tmp / "sweep-bad"
@@ -524,6 +529,81 @@ with tempfile.TemporaryDirectory() as td2:
     got = _cache_root_with({}, td2)
     check("an empty cache dir still yields today's capture target",
           True, bool(got) and got.name.startswith("sweep-"))
+
+print("== two concurrent captures never share a staging path ==")
+# ⛔ FAILS ON THE PRE-CHANGE TREE. The staging path was a single shared
+# `<cache>.partial`, while terransoul_hook.py's own comment twenty lines below
+# it states the condition that makes that unsafe: "the two workers install at
+# the same time by construction". Worker B's `shutil.rmtree(staging)` on entry
+# therefore deletes the tree worker A is still downloading (~297 MB via
+# `download_dir`), and A then either publishes a truncated cache by rename or
+# fails its own bin/claude check and discards a capture that was fine. On the
+# old code `IN_FLIGHT` is gone when A resumes and the second check below reads
+# False; the first reads 1 distinct staging path instead of 2.
+#
+# Deterministic, not timing-based: A blocks inside download_dir until B has
+# finished its ENTIRE capture, so the interleaving is forced rather than raced.
+with tempfile.TemporaryDirectory() as td3:
+    shared = Path(td3) / "sweep-concurrent"
+    seen_staging = []
+    survived = {"v": None}
+
+    class PidSelf(FakeSelf):
+        """A FakeSelf that makes os.getpid() answer with ITS worker's pid.
+
+        Patched on the exec probe because that is the last await before the
+        staging path is computed, so each coroutine's own pid is in place when
+        its own `staging = ...` line runs.
+        """
+
+        def __init__(self, cache, pid):
+            super().__init__(cache)
+            self._pid = pid
+
+        async def exec_as_agent(self, environment, command):
+            _th.os.getpid = lambda p=self._pid: p
+            return await FakeSelf.exec_as_agent(self, environment, command)
+
+    async def _concurrent():
+        b_done = asyncio.Event()
+
+        class SlowEnv(FakeEnv):
+            async def download_dir(self, src, dst):
+                seen_staging.append(str(dst))
+                d = Path(dst)
+                d.mkdir(parents=True, exist_ok=True)
+                (d / "IN_FLIGHT").write_text("A", encoding="utf-8")
+                try:
+                    await asyncio.wait_for(b_done.wait(), 10)
+                except Exception:  # noqa: BLE001 - a stuck B must not hang the suite
+                    pass
+                survived["v"] = (d / "IN_FLIGHT").exists()
+                (d / "bin").mkdir(parents=True, exist_ok=True)
+                (d / "bin" / "claude").write_text("#!/bin/sh\n", encoding="utf-8")
+
+        class FastEnv(FakeEnv):
+            async def download_dir(self, src, dst):
+                seen_staging.append(str(dst))
+                d = Path(dst)
+                (d / "bin").mkdir(parents=True, exist_ok=True)
+                (d / "bin" / "claude").write_text("#!/bin/sh\n", encoding="utf-8")
+                b_done.set()
+
+        a = PidSelf(shared, 111111)
+        b = PidSelf(shared, 222222)
+        await asyncio.gather(populate(a, SlowEnv(a)), populate(b, FastEnv(b)))
+
+    _real_getpid = _th.os.getpid
+    try:
+        run(_concurrent())
+    finally:
+        _th.os.getpid = _real_getpid
+
+    check("the two workers staged in DIFFERENT directories", 2, len(set(seen_staging)))
+    check("worker A's in-flight tree survived worker B's entry", True, survived["v"])
+    check("the winner still published by rename", True, (shared / "bin" / "claude").exists())
+    check("no staging dir is left behind by either worker", [],
+          sorted(p.name for p in shared.parent.glob(shared.name + ".partial*")))
 
 print()
 print("install-cache.test.py: ALL PASS" if fails == 0 else f"install-cache.test.py: {fails} FAILURE(S)")

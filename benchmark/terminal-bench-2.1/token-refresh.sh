@@ -4,7 +4,8 @@
 #
 #   usage: source token-refresh.sh; refresh_token
 #          (needs $REPO in scope; honours $TB_TOKEN_FILE, default
-#           $REPO/mcp-data/.tb-token.env, and $TB_TOKEN_STATIC=1)
+#           $REPO/mcp-data/.tb-token.env, and $TB_TOKEN_STATIC=1;
+#           the expiry wait polls every $TB_TOKEN_POLL_S seconds, default 60)
 #
 # WHY THIS IS ITS OWN FILE, not copy-pasted into every driver. Until
 # 2026-08-12 this exact function lived independently inside run-sweep.next.sh
@@ -149,7 +150,7 @@ console.log("[token-refresh] refreshed, "+mins.toFixed(0)+" min of headroom");
 
 # The full retry/poke/wait ladder. Call this, not _refresh_token_once directly.
 refresh_token() {
-  local attempt rc mins secs waited max_wait min_minutes
+  local attempt rc mins secs waited max_wait min_minutes poll slept slice remaining
   min_minutes="${TB_TOKEN_MIN_MINUTES:-$(_token_min_minutes)}"
   # Scales with the gate (TBENCH-TOKEN-CEILING-1); floor 3000 s = one expiry
   # cycle, which is what the 40-minute gate needed.
@@ -180,12 +181,32 @@ refresh_token() {
       # 2. Still short, and the token is still alive: the CLI will not rotate
       #    until it actually expires, so wait for that moment and poke again.
       #    Bounded by the token's own remaining life, never open-ended.
+      #
+      # ⛔ MEASURED 2026-09-15: the credential can also be rotated EXTERNALLY
+      # (another session's CLI call), and a single blind `sleep "$secs"` never
+      # re-reads the file while it sleeps. Two workers stayed asleep through
+      # 40 and 75 minutes of a 5067 s / 7089 s wait with 470 min of fresh
+      # headroom already on disk, and the coordinator had to kill both sleeps
+      # by hand. Poll in TB_TOKEN_POLL_S slices instead and re-check after
+      # each one — same total bound as before, just able to notice.
       if [ "$mins" != "unreadable" ]; then
         secs="$(awk -v m="$mins" 'BEGIN{ s=(m*60)+45; if (s<45) s=45; printf "%d", s }')"
         if [ "$((waited + secs))" -le "$max_wait" ]; then
-          echo "[token-refresh] waiting ${secs}s for the credential to reach expiry, then re-poking" >&2
-          sleep "$secs"
-          waited=$((waited + secs))
+          poll="${TB_TOKEN_POLL_S:-60}"
+          echo "[token-refresh] waiting up to ${secs}s for the credential to reach expiry (polling every ${poll}s), then re-poking" >&2
+          slept=0
+          while [ "$slept" -lt "$secs" ]; do
+            slice=$poll
+            remaining=$((secs - slept))
+            [ "$slice" -gt "$remaining" ] && slice=$remaining
+            sleep "$slice"
+            slept=$((slept + slice))
+            if _refresh_token_once; then
+              echo "[token-refresh] credential rotated externally after ${slept}s — resuming" >&2
+              return 0
+            fi
+          done
+          waited=$((waited + slept))
           _poke_host_cli
           _refresh_token_once && return 0
         fi

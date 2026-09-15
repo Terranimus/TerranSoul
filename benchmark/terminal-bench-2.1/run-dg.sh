@@ -151,14 +151,26 @@ code="$(printf '%s' "$health_body" | tail -n1)"
 # "the isolated bench brain runs with TERRANSOUL_MCP_DATA_DIR=mcp-data-tbench").
 # `TERRANSOUL_HEADLESS_DATA_DIR` is a DIFFERENT binary's variable and is
 # silently ignored by `--mcp-tray`.
+#
+# ⛔ AND `node scripts/copilot-start-mcp.mjs` IS NOT THE REPAIR, EVEN WITH BOTH
+# VARIABLES SET. That script probes for an EXISTING server first
+# (`findExistingMcpServer`), finds the production tray healthy on :7423, prints
+# "reusing it" and exits 0 — having bound nothing on :$BRAIN_PORT. So the
+# instruction this message used to give succeeds, reports success, and leaves
+# the bench brain exactly as missing as it was; the next task then refuses here
+# again, in seconds, for as long as the sweep has tasks left. The repair has to
+# be a script that starts THIS port and waits for it to be ready and isolated.
 if [ "$code" != "200" ]; then
   echo "brain not healthy on :$BRAIN_PORT (got '$code')" >&2
-  echo "  start it with BOTH of these set, or you will get the production store:" >&2
-  echo "    TERRANSOUL_MCP_PORT=$BRAIN_PORT \\" >&2
-  echo "    TERRANSOUL_MCP_DATA_DIR=$BRAIN_DATA \\" >&2
-  echo "    node scripts/copilot-start-mcp.mjs" >&2
-  echo "  then verify isolation: the /health memory_total on :$BRAIN_PORT must" >&2
-  echo "  DIFFER from the production brain's on :7423." >&2
+  echo "  start it with:" >&2
+  echo "    bash ${TB_DRIVER_HOME:-$HERE}/start-bench-brain.sh" >&2
+  echo "  which launches the MCP binary with TERRANSOUL_MCP_PORT=$BRAIN_PORT," >&2
+  echo "  TERRANSOUL_MCP_DATA_DIR=$BRAIN_DATA and TERRANSOUL_MCP_IDLE_TIMEOUT=0" >&2
+  echo "  (the 300 s default shuts the brain down MID-TRIAL), then waits until" >&2
+  echo "  /health is 200, llm_provider_state is ready, and memory_total DIFFERS" >&2
+  echo "  from the production brain's on :7423." >&2
+  echo "  Do NOT use 'node scripts/copilot-start-mcp.mjs' for this: it reuses the" >&2
+  echo "  production tray on :7423 and exits 0 without starting :$BRAIN_PORT." >&2
   exit 2
 fi
 
@@ -336,6 +348,45 @@ for m in models:
       echo "[run-dg] host headroom: no exited trial containers to remove"
     fi
   fi
+
+  # ── FREE DISK: THE ONE FIGURE HERE THAT REFUSES ────────────────────────────
+  #
+  # ⛔ NOTHING CHECKED IT. This block weighs VRAM and leaked containers and then
+  # starts a run that pulls harbor images, writes container layers and files a
+  # job directory per trial — all onto the repo drive. A sweep launched with a
+  # few GB left cannot finish, and the way it fails is expensive and confusing:
+  # image pulls and apt/pip installs inside containers die with unrelated-looking
+  # errors, one task at a time, for hours.
+  #
+  # ⛔ AND IT REFUSES RATHER THAN REPORTS, WHICH THE REST OF THIS BLOCK DOES NOT.
+  # The distinction is the one the TLS preflight above already draws: evicting an
+  # expired model or removing an exited container are actions, and a threshold on
+  # them would be a judgement call this campaign has measured the cost of
+  # (judge 11%, missing-deliverable 0/3, self-scan 12-16%). Free disk is neither
+  # — there is no safe automatic action that frees space on the owner's drive,
+  # and "under 30 GB" is a deterministic fact about a broken environment, not an
+  # inference about a trial. Same exit code (2) as every other preflight refusal
+  # here, so run-two-workers.sh reads it as a refusal and halts after two.
+  #
+  # FAILS OPEN when df gives nothing parseable: a preflight that blocks because
+  # it could not check is worse than no preflight.
+  _min_free_gb="${TB_MIN_FREE_GB:-30}"
+  _avail_kb="$(df -k "${REPO:-.}" 2>/dev/null | tail -1 | awk '{print $4}')"
+  case "$_avail_kb" in
+    ''|*[!0-9]*)
+      echo "[run-dg] host headroom: free-space check SKIPPED (df gave no usable figure)" >&2 ;;
+    *)
+      _avail_gb=$(( _avail_kb / 1048576 ))
+      if [ "$_avail_gb" -lt "$_min_free_gb" ]; then
+        echo "[run-dg] REFUSING: only ${_avail_gb} GB free on the repo drive (floor ${_min_free_gb} GB)." >&2
+        echo "[run-dg] harbor images, container layers and per-trial job artefacts all land here." >&2
+        echo "[run-dg] A sweep started now fails one task at a time, for hours, with errors that" >&2
+        echo "[run-dg] look like anything but a full disk. Free space, or lower the floor" >&2
+        echo "[run-dg] deliberately with TB_MIN_FREE_GB." >&2
+        exit 2
+      fi
+      echo "[run-dg] host headroom: ${_avail_gb} GB free on the repo drive (floor ${_min_free_gb} GB)" ;;
+  esac
 fi
 
 if [ "${TB_SKIP_WARMTH:-0}" != "1" ]; then
@@ -690,10 +741,10 @@ if [ -n "$_first_task" ] && [ -n "$_task_toml" ] && [ -f "$_task_toml" ]; then
     # TB_TOKEN_MIN_MINUTES still overrides. Exported rather than passed because
     # the credential block below SOURCES token-refresh.sh.
     export TB_TRIAL_CEILING_S="$_budget_sec"
-    _budget="You have about **$(( _sec / 60 )) minutes of wall-clock** for this task, after which it is scored as-is. A single blocking tool call can consume up to 10 minutes of that, so before running something that might be slow, decide whether you can afford to sit and wait for it — and if not, start it in the background and poll, rather than discovering the limit by hitting it."
+    _budget="You have about **$(( _sec / 60 )) minutes of wall-clock** for this task. Overrunning it does not score your work as-is: the trial ERRORS and scores 0 even when what is on disk is correct, so your closing message must land before the wall — keep the last few percent of the budget for it. One blocking tool call can eat 10 minutes of that, so before running something slow, decide whether you can afford to wait; if not, background it and poll."
   fi
 fi
-[ -n "$_budget" ] || _budget="Work efficiently: a task that runs out of wall-clock is scored as-is."
+[ -n "$_budget" ] || _budget="Work efficiently: overrunning the wall-clock ERRORS the trial and scores 0 even when the work on disk is correct, so finish with time left to report."
 
 # ── THE BRAIN MUST OUTLIVE THE TRIAL (TBENCH-BRAIN-IDLE-1) ───────────────────
 #
@@ -991,7 +1042,7 @@ fi
 # So: render the config with the real token (no reliance on the container
 # expanding ${...}), and PROVE the token works before spending anything.
 MCP_TOKEN_FILE="${TERRANSOUL_MCP_TOKEN_FILE:-$BRAIN_DATA/mcp-token.txt}"
-[ -s "$MCP_TOKEN_FILE" ] || { echo "no MCP token at $MCP_TOKEN_FILE; start the brain via node scripts/copilot-start-mcp.mjs" >&2; exit 2; }
+[ -s "$MCP_TOKEN_FILE" ] || { echo "no MCP token at $MCP_TOKEN_FILE; start the brain with: bash ${TB_DRIVER_HOME:-$HERE}/start-bench-brain.sh (NOT copilot-start-mcp.mjs, which reuses the production tray on :7423 and never binds :$BRAIN_PORT)" >&2; exit 2; }
 TERRANSOUL_MCP_TOKEN="$(tr -d '\r\n' < "$MCP_TOKEN_FILE")"
 
 mcp_code="$(curl -s -m 8 -o /dev/null -w '%{http_code}' \
@@ -1635,6 +1686,13 @@ if [ "${TB_STOP_HOOK:-0}" = "1" ]; then
   # approximate "off" for a control run.
   [ -n "${TERRANSOUL_DEADLINE_STOP_FRACTION:-}" ] \
     && args+=(--ae "TERRANSOUL_DEADLINE_STOP_FRACTION=$TERRANSOUL_DEADLINE_STOP_FRACTION")
+  # The three deadline-awareness knobs added 2026-09-14 (repeatable deadline
+  # deny, hard finalisation past 0.99, budget notices past 0.7) are
+  # env-overridable in the CLI package but only reach the container when
+  # forwarded here; unset means the in-package default applies.
+  for _knob in TERRANSOUL_DEADLINE_FINAL_FRACTION TERRANSOUL_BUDGET_NOTICE_FRACTION TERRANSOUL_BUDGET_NOTICE_STEP; do
+    [ -n "${!_knob:-}" ] && args+=(--ae "$_knob=${!_knob}")
+  done
   # ── Judge prefill trim (TBENCH-JUDGE-PREFILL-1) ──────────────────────────
   # The first user message the Stop hook reads is the TASK instruction with
   # this harness's own extra-instruction appended. MEASURED 2026-08-29: the
@@ -1700,7 +1758,24 @@ fi
 
 echo "[run-dg] job=$JOB tasks=${TB_TASKS:-${TASK:-<all>}} attempts=$ATTEMPTS concurrency=$CONCURRENCY defer=${TB_DEFER_WRITES:-0}"
 echo "[run-dg] credential: CLAUDE_CODE_OAUTH_TOKEN (${#CLAUDE_CODE_OAUTH_TOKEN} chars, not echoed)"
-"$HARBOR" "${args[@]}"
+# ⛔ CAPTURE THE EXIT CODE; DO NOT LET `set -e` END THE SCRIPT HERE.
+#
+# This file runs under `set -euo pipefail`, so a non-zero harbor exit used to
+# terminate the driver ON THIS LINE — skipping the deferred-lesson flush, the
+# result triage, the credit step, the refutation watch and the forensics block,
+# every one of which is what turns a finished trial into something the brain and
+# the campaign can learn from. And harbor exits non-zero for reasons that are
+# not "no result": a trial that errored, a teardown warning, a signal. The
+# driver's own headline rule is that the exit code is not the verdict ("READ
+# result.json, NEVER THE EXIT CODE. harbor exits 0 on a FAILED trial"), and
+# acting on it by aborting was the inverse of that rule.
+#
+# The code is kept because the post-processing below is allowed to see it: a
+# non-zero harbor with no result.json is a different event from a non-zero
+# harbor with one, and the reporting says which.
+harbor_rc=0
+"$HARBOR" "${args[@]}" || harbor_rc=$?
+[ "$harbor_rc" -eq 0 ] || echo "[run-dg] harbor exited $harbor_rc — continuing to triage/credit/forensics; the verdict is result.json, not this code." >&2
 
 # Flush deferred lessons NOW, while the proxy is still up and we can see the
 # result. The EXIT trap only kills it, and on Windows that hard-terminates node
@@ -1891,3 +1966,51 @@ if [ "${TB_CREDIT_OUTCOME:-1}" = "1" ] && [ -n "${TERRANSOUL_MCP_TOKEN:-}" ]; th
       || echo "[run-dg] outcome credit skipped for $(basename "$_trial") (non-fatal)"
   done
 fi
+
+# ── question 1c: FREEZE THE DIAGNOSIS WHILE THE ARTIFACTS ARE STILL HERE ─────
+#
+# ⛔ THE GAP: `triage_failed_trials` above PRINTS a diagnosis and then loses it.
+#
+# Its answer lives in this run's stdout and nowhere else, so every later
+# question — "did this task fail the same way last time?", "is this a
+# regression?", "which failures share a signature?" — restarts from the seven
+# raw files, by hand, in a different order each time. That re-derivation has
+# been the opening move of nearly every diagnosis in this campaign.
+#
+# This runs AFTER the credit loop on purpose: the record names the memories the
+# trial may be credited for, and reading them before the credit step would
+# describe a state that no longer exists by the time anyone reads the record.
+#
+# It writes `forensics.json` + `forensics.md` into each trial directory and one
+# line into the jobs root's `forensics-index.jsonl`, which
+# `forensics-side-by-side.mjs` reads back as a single table.
+#
+# Advisory, exactly like the triage step: fully guarded, exit code discarded,
+# never gates, never writes to the brain, never opens a socket. A bookkeeping
+# step must not be able to fail a measured run.
+forensics_for_trials() {
+  local _job_dir="$1" _here="$2" _t
+  [ "${TB_SKIP_FORENSICS:-0}" = "1" ] && return 0
+  [ -d "$_job_dir" ] || return 0
+  for _t in "$_job_dir"/*/; do
+    [ -d "$_t" ] || continue
+    node "$_here/post-trial-forensics.mjs" "$_t" --base "$(dirname "$_job_dir")" 2>&1 \
+      | sed 's/^/[forensics] /' || true
+  done
+  return 0
+}
+
+forensics_for_trials "$JOB_DIR" "$HERE"
+
+# ⛔ LAST LINE ON PURPOSE — ADD NEW POST-PROCESSING STEPS ABOVE IT, NOT BELOW.
+#
+# harbor's exit code is now CAPTURED rather than allowed to end the script at
+# the harbor line (see the comment there), so every step above this one runs
+# whatever harbor did. But the code must still reach the caller: run-two-workers
+# prints it when it classifies a run that produced no job directory, and
+# redo-task.sh echoes it. Silently exiting 0 after a harbor failure would make a
+# driver that refused look exactly like one that finished.
+#
+# It remains NOT the verdict — result.json is, as this file says at length. It
+# is the signal for "did the driver get to run at all".
+exit "$harbor_rc"

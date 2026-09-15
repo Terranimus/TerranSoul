@@ -378,10 +378,18 @@ test('lateBashWrites anchors on the trajectory the replay reads, not on a transc
   // The regression guard for the anchoring bug itself: the function takes the
   // parsed trajectory, so it cannot be pointed at a file whose metadata marker
   // never appears.
+  //
+  // ⛔ UPDATED 2026-09-14: this used to use `cat > /app/k.py <<'PYX'` as its
+  // "unrecoverable" fixture. As of the heredoc-recovery change that command IS
+  // recoverable (see the HEREDOC RECOVERY section below) and correctly yields
+  // lateWrites=0 — that was the whole point of building it, not a regression
+  // here. Swapped to a `python3 -` self-write, which stays genuinely
+  // unrecoverable (the file is never a `cat`/`tee` target the shell scan can
+  // see), so this test still guards what it says it guards: the anchor.
   const traj = {
     steps: [
       { step_id: 1, message: block({ type: 'create', filePath: '/app/k.py', content: 'k\n' }) },
-      bashStep(2, "cat > /app/k.py <<'PYX'\nk2\nPYX"),
+      bashStep(2, "python3 - <<'PYX'\nopen('/app/k.py','w').write('k2')\nPYX"),
     ],
   }
   assert.equal(lateBashWrites(traj, ['/app/k.py']).get('/app/k.py'), 1)
@@ -423,4 +431,183 @@ test('a later full WRITE RESETS the taint an earlier shell patch left', () => {
   assert.equal(f.unrecoverable, 0)
   assert.equal(f.fidelity, 'complete')
   assert.equal(f.content, 'final\n')
+})
+
+// ── HEREDOC / LITERAL-REDIRECT RECOVERY (2026-09-14) ────────────────────────
+//
+// ⛔ THE GAP: a precision measurement over 689 graded trials found 245 (35.6%)
+// with NO `fidelity !== 'incomplete'` deliverable, because the agent wrote the
+// file with `cat > /app/x.py <<'EOF' … EOF`, `tee path <<EOF`, or a
+// single-quoted `printf`/`echo` redirect — none of which the Write/Edit-tool
+// replay above ever looked at. Every test in this section is RED on the
+// PRE-CHANGE tree: `heredocWritesIn`/`literalRedirectWritesIn` did not exist,
+// so a file NEVER touched by the Write/Edit tool got no record at all
+// (`extractDeliverables` returned `[]`), and a file that already had a tool
+// record only ever saw its heredoc write through the old generic `>`/`tee`
+// regex in `bashWritesTo` — which increments `lateWrites` and marks the
+// record `fidelity:'incomplete'` rather than recovering the bytes.
+import { heredocWritesIn, literalRedirectWritesIn } from './extract-deliverables.mjs'
+
+test('a quoted heredoc is recovered byte-exact, including a literal $VAR', () => {
+  // RED pre-change: no record for /app/x.py exists at all (nothing ever calls
+  // the Write/Edit tool on it), so `extractDeliverables` returns `[]` — the
+  // 35.6% blind spot itself, on a file the agent never touched through a tool.
+  const traj = {
+    steps: [bashStep(1, "cat > /app/x.py <<'EOF'\nTHRESH = 0.30\nvalue = $THRESH\nEOF")],
+  }
+  const [f] = extractDeliverables(traj)
+  assert.equal(f.path, '/app/x.py')
+  assert.equal(f.content, 'THRESH = 0.30\nvalue = $THRESH\n')
+  assert.equal(f.fidelity, 'heredoc')
+})
+
+test('an unquoted heredoc is recovered but flagged heredoc-unquoted', () => {
+  // RED pre-change: same as above — returns `[]`. The point of THIS test is
+  // the fidelity tier: a bare `<<EOF` lets the shell expand `$FOO`, so the
+  // captured text is the best evidence available, not a trusted byte-exact
+  // copy — it must not be reported as plain 'complete'/'heredoc'.
+  const traj = { steps: [bashStep(1, 'cat > /app/y.py <<EOF\nvalue = $FOO\nEOF')] }
+  const [f] = extractDeliverables(traj)
+  assert.equal(f.content, 'value = $FOO\n')
+  assert.equal(f.fidelity, 'heredoc-unquoted')
+})
+
+test('the redirection may come BEFORE the heredoc operator (cat > path <<EOF)', () => {
+  const traj = { steps: [bashStep(1, "cat > /app/a.py <<'EOF'\na = 1\nEOF")] }
+  const [f] = extractDeliverables(traj)
+  assert.equal(f.path, '/app/a.py')
+  assert.equal(f.content, 'a = 1\n')
+  assert.equal(f.fidelity, 'heredoc')
+})
+
+test('the redirection may come AFTER the heredoc operator (cat <<EOF > path)', () => {
+  // RED pre-change for a distinct reason from the "before" form: even a naive
+  // "look for `cat > path`" regex would miss this word order entirely.
+  const traj = { steps: [bashStep(1, "cat <<'EOF' > /app/b.py\nb = 2\nEOF")] }
+  const [f] = extractDeliverables(traj)
+  assert.equal(f.path, '/app/b.py')
+  assert.equal(f.content, 'b = 2\n')
+  assert.equal(f.fidelity, 'heredoc')
+})
+
+test('>> after an earlier Write APPENDS the heredoc body onto the tracked bytes', () => {
+  // RED pre-change: `bashWritesTo` matches the `>>` and increments lateWrites,
+  // marking the record incomplete instead of appending the (fully known)
+  // heredoc text onto the buffer the Write tool already gave us.
+  const traj = {
+    steps: [
+      { step_id: 1, message: block({ type: 'create', filePath: '/app/f.py', content: 'A\n' }) },
+      bashStep(2, "cat >> /app/f.py <<'EOF'\nB\nEOF"),
+    ],
+  }
+  const [f] = extractDeliverables(traj)
+  assert.equal(f.content, 'A\nB\n')
+  assert.equal(f.lateWrites, 0)
+  assert.equal(f.fidelity, 'heredoc')
+})
+
+test('a later sed -i that cannot be safely replayed still marks a heredoc-recovered file stale-possible', () => {
+  // RED pre-change: there is no heredoc-recovered record to taint in the first
+  // place (extractDeliverables returns `[]` before the sed even runs).
+  const traj = {
+    steps: [
+      bashStep(1, "cat > /app/g.py <<'EOF'\nx = 1\nEOF"),
+      bashStep(2, "sed -i -e 's/x/y/' -e 'w /tmp/exfil' /app/g.py"),
+    ],
+  }
+  const [f] = extractDeliverables(traj)
+  assert.equal(f.content, 'x = 1\n')
+  assert.equal(f.lateWrites, 1)
+  assert.equal(f.fidelity, 'incomplete')
+})
+
+test('a later SAFE sed -i is replayed on top of a heredoc recovery, not flagged', () => {
+  // Same-command interleaving: proves the heredoc phase runs BEFORE the
+  // sed/bashWritesTo phase for one recorded command, and that the heredoc's
+  // own `>` is not ALSO counted as a stale write by that second phase (the
+  // double-count guard). RED pre-change: no record exists for sed to replay
+  // against, so this would return `[]` rather than the sedded content.
+  const traj = { steps: [bashStep(1, "cat > /app/h.py <<'EOF'\nx = 1\nEOF\nsed -i 's/1/2/' /app/h.py")] }
+  const [f] = extractDeliverables(traj)
+  assert.equal(f.content, 'x = 2\n')
+  assert.equal(f.sedReplays, 1)
+  assert.equal(f.lateWrites, 0)
+  assert.equal(f.fidelity, 'heredoc')
+})
+
+test('a python - <<EOF heredoc never produces a fabricated deliverable', () => {
+  // RED pre-change is moot in the sense that this already returned `[]` — the
+  // guard is that it MUST KEEP returning `[]` once heredoc recovery exists,
+  // i.e. `heredocWritesIn` must not treat `python3` as a `cat`/`tee` target.
+  const traj = {
+    steps: [bashStep(1, "python3 - <<'PYX'\nopen('/app/results.json','w').write('{}')\nPYX")],
+  }
+  assert.deepEqual(extractDeliverables(traj), [])
+})
+
+test('a `tee` heredoc target is recognised, plain and with -a', () => {
+  // RED pre-change: `tee path <<EOF` has no `>` at all, so nothing in the old
+  // path-recovery code ever looked at its body.
+  const plain = extractDeliverables({ steps: [bashStep(1, "tee /app/out.txt <<'EOF'\nrow1\nrow2\nEOF")] })
+  assert.equal(plain[0].content, 'row1\nrow2\n')
+  assert.equal(plain[0].fidelity, 'heredoc')
+
+  const appended = extractDeliverables({
+    steps: [
+      bashStep(1, "tee /app/log.txt <<'EOF'\nfirst\nEOF"),
+      bashStep(2, "tee -a /app/log.txt <<'EOF'\nsecond\nEOF"),
+    ],
+  })
+  assert.equal(appended[0].content, 'first\nsecond\n')
+})
+
+test('single-quoted printf/echo literal redirects are recovered', () => {
+  // RED pre-change: neither form touches the Write/Edit tool, so no record is
+  // ever created; `printf`/`echo` are not even named anywhere in the old file.
+  const [p] = extractDeliverables({
+    steps: [bashStep(1, "printf '%s' 'no trailing newline, $LITERAL kept' > /app/p.txt")],
+  })
+  assert.equal(p.content, 'no trailing newline, $LITERAL kept')
+  assert.equal(p.fidelity, 'heredoc')
+
+  const [e] = extractDeliverables({ steps: [bashStep(1, "echo 'a line with a literal $DOLLAR' > /app/e.txt")] })
+  assert.equal(e.content, 'a line with a literal $DOLLAR\n')
+  assert.equal(e.fidelity, 'heredoc')
+})
+
+test('<<- strips leading tabs from the body, matching what the shell actually writes', () => {
+  // RED pre-change: no recovery at all. The `-` variant exists specifically so
+  // the heredoc body can be indented in the SOURCE without those tabs landing
+  // in the file; recovering the raw indented lines would be confidently wrong.
+  const traj = { steps: [bashStep(1, "cat > /app/i.py <<-'EOF'\n\t\tindented = True\n\tEOF")] }
+  const [f] = extractDeliverables(traj)
+  assert.equal(f.content, 'indented = True\n')
+})
+
+test('a relative heredoc target on a known cwd resolves to the same absolute deliverable', () => {
+  // RED pre-change: no recovery, and separately this pins the merge key: a
+  // relative `cat > out.csv` at cwd /app must produce ONE record at
+  // /app/out.csv, not a second bookkeeping entry keyed by the bare 'out.csv'.
+  const traj = { steps: [bashStep(1, "cat > out.csv <<'EOF'\na,b\n1,2\nEOF", '/app')] }
+  const [f] = extractDeliverables(traj)
+  assert.equal(f.path, '/app/out.csv')
+  assert.equal(f.content, 'a,b\n1,2\n')
+})
+
+test('heredocWritesIn resumes scanning AFTER the recovered body, not from inside it', () => {
+  // A body containing text that LOOKS like a heredoc start (`<<EOF` inside a
+  // comment) must not be parsed as a second, nested heredoc. RED pre-change:
+  // the function did not exist.
+  const events = heredocWritesIn("cat > /app/j.py <<'EOF'\n# example: x <<EOF marker\nreal = 1\nEOF")
+  assert.equal(events.length, 1)
+  assert.equal(events[0].content, '# example: x <<EOF marker\nreal = 1\n')
+})
+
+test('literalRedirectWritesIn ignores an -e echo and a %d printf (reinterpreted, not literal)', () => {
+  // Scoped deliberately narrow: these forms are not "single-quoted literal" in
+  // the sense the spec means, since the flag/format reinterprets the argument.
+  // RED pre-change is moot (the function did not exist); the guard here is
+  // that adding it must not OVER-match.
+  assert.deepEqual(literalRedirectWritesIn("echo -e 'a\\nb' > /app/k.txt"), [])
+  assert.deepEqual(literalRedirectWritesIn("printf '%d' '5' > /app/n.txt"), [])
 })

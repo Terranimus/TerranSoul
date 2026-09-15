@@ -22,6 +22,18 @@
           }
         ]
       }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "terransoul post-tool-hook",
+            "timeout": 10
+          }
+        ]
+      }
     ]
   }
 }

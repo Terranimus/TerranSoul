@@ -19,11 +19,12 @@
  * the import below throws.
  */
 import { strict as assert } from 'node:assert'
-import { mkdtempSync, writeFileSync, mkdirSync } from 'node:fs'
+import { mkdtempSync, writeFileSync, mkdirSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
 import { readReward, servedMemoryIds, buildObservation, trialBasename } from './credit-trial-outcome.mjs'
+import { transportFor } from './refutation-watch.mjs'
 
 const trialWithReward = (value) => {
   const dir = mkdtempSync(join(tmpdir(), 'ts-credit-'))
@@ -1047,4 +1048,45 @@ test('END TO END: a LEGACY read row is classified from the ledger, and still not
   )
   assert.equal(calls.filter((c) => c.name === 'brain_stamp_outcome').length, 0)
   assert.match(stdout, /exposed-while-refuted: 26809/)
+})
+
+// ── THE CREDIT PATH MUST NOT OPEN ITS OWN UNBOUNDED SOCKET ───────────────────
+//
+// ⛔ FAILS ON THE PRE-CHANGE TREE: `credit-trial-outcome.mjs` built its own
+// inline `fetch(url, {...})` transport — a second copy of the same JSON-RPC
+// envelope, with the one difference that mattered for an unattended sweep: NO
+// TIMEOUT. undici's default headers timeout is 300 s, this runs at the END of
+// every trial and several calls deep, and the brain it talks to is the one the
+// MCP idle watchdog has already been measured shutting down MID-TRIAL
+// (2026-09-01, filter-js-from-html). The grep below found a bare `fetch(` and
+// the import assertion found no `transportFor`.
+//
+// This is a source-level invariant on purpose: the transport is constructed
+// inside `main()` and cannot be reached from an import, so what is pinned is
+// that there is exactly ONE transport in this harness and this file routes
+// through it. Its BEHAVIOUR (bounded wait, non-fatal timeout) is exercised
+// directly in refutation-watch.test.mjs, against the same function.
+test('crediting shares the ONE bounded MCP transport instead of its own', () => {
+  const src = readFileSync(new URL('./credit-trial-outcome.mjs', import.meta.url), 'utf8')
+  assert.match(
+    src,
+    /import \{[^}]*transportFor[^}]*\} from '\.\/refutation-watch\.mjs'/,
+    'credit-trial-outcome.mjs does not import the shared transport',
+  )
+  // No second transport: any bare fetch( here would be an unbounded socket
+  // again, by construction, because the bound lives in transportFor.
+  const bare = src.split('\n').filter((l) => /(^|[^.\w])fetch\(/.test(l) && !l.trim().startsWith('*'))
+  assert.deepEqual(bare, [], `credit-trial-outcome.mjs still calls fetch() directly:\n${bare.join('\n')}`)
+})
+
+test('the shared transport is the bounded one', async () => {
+  const call = transportFor('http://127.0.0.1:9/mcp', 'tok', {
+    timeoutMs: 100,
+    label: 'credit',
+    fetchImpl: (_u, init) =>
+      new Promise((_r, reject) => init.signal.addEventListener('abort', () => reject(init.signal.reason))),
+  })
+  const out = await call({ name: 'brain_observe_outcome', arguments: {} })
+  assert.equal(out.res.ok, false, 'a stalled brain must not look like a successful credit')
+  assert.match(out.text, /timed out/)
 })

@@ -40,9 +40,18 @@
  * script is a plain substitution or deletion. Anything that can open a file
  * (`w`, `r`, `e`) or change matching (`-n`, `-E`) is refused and the record is
  * flagged instead. A diagnostic tool that can be made to write files by the
- * artefact it is diagnosing is not a diagnostic tool. Heredocs and Python
- * self-writes are NEVER executed: their bytes are unrecoverable, and the honest
- * output is `fidelity:'incomplete'`, not a confident file.
+ * artefact it is diagnosing is not a diagnostic tool. Nothing here EXECUTES a
+ * heredoc or a Python self-write, ever — but a `cat`/`tee` heredoc does not
+ * need executing, because its body sits verbatim in the transcript text. A
+ * quoted delimiter (`'EOF'`, `"EOF"`, `\EOF`) means the shell performed no
+ * expansion on it, so that text IS the file, recorded `fidelity:'heredoc'`; an
+ * unquoted delimiter (`<<EOF`) means a `$VAR` or `` `cmd` `` inside the body
+ * may have been expanded before the write, so the same text is still copied
+ * out — it is the best evidence available — but flagged
+ * `fidelity:'heredoc-unquoted'` rather than trusted outright. A heredoc or
+ * literal redirect feeding any command OTHER than `cat`/`tee`/`printf`/`echo`,
+ * and any write a Python (or other program) self-write performs on its own,
+ * stay unrecoverable and `fidelity:'incomplete'` — see `heredocWritesIn`.
  *
  * ⛔ WHAT IT MUST NOT BECOME. This exists to diagnose OUR harness, not to mine
  * graded trials for task answers. What it recovers is the agent's own output,
@@ -352,6 +361,259 @@ export function bashCommandsIn(step) {
     .map((c) => ({ command: c.arguments.command, cwd }))
 }
 
+// ── BASH HEREDOC / LITERAL-REDIRECT RECOVERY ────────────────────────────────
+//
+// ⛔ 35.6% OF GRADED TRIALS HAD NO RECOVERABLE DELIVERABLE FOR EXACTLY THIS
+// REASON. A precision measurement over 689 graded trials found 245 with no
+// `fidelity !== 'incomplete'` deliverable because the agent wrote the file with
+// `cat > /app/x.py <<'EOF' … EOF`, `tee path <<EOF`, or `printf`/`echo` into a
+// redirect — none of which touch the Write/Edit tool `extractDeliverables`
+// already replays. 9 of 11 ground-truth failures on two tasks were in that
+// blind spot. Everything below is regex-driven scanning of the recorded
+// COMMAND TEXT, never execution: a heredoc's body is copied out of the
+// transcript, not run through a shell.
+
+/** Index of the char right after the last top-level clause separator before `uptoIndex`, or 0. */
+function clauseStart(line, uptoIndex) {
+  let quote = null
+  const end = Math.min(uptoIndex, line.length)
+  let last = 0
+  for (let i = 0; i < end; i++) {
+    const c = line[i]
+    if (quote) {
+      if (c === quote) quote = null
+      continue
+    }
+    if (c === "'" || c === '"') {
+      quote = c
+      continue
+    }
+    if ((c === '&' && line[i + 1] === '&') || (c === '|' && line[i + 1] === '|')) {
+      last = i + 2
+      i++
+      continue
+    }
+    if (c === ';' || c === '|') last = i + 1
+  }
+  return last
+}
+
+/** Index of the next top-level clause separator at or after `fromIndex`, or `line.length`. */
+function clauseEnd(line, fromIndex) {
+  let quote = null
+  for (let i = Math.max(fromIndex, 0); i < line.length; i++) {
+    const c = line[i]
+    if (quote) {
+      if (c === quote) quote = null
+      continue
+    }
+    if (c === "'" || c === '"') {
+      quote = c
+      continue
+    }
+    if ((c === '&' && line[i + 1] === '&') || (c === '|' && line[i + 1] === '|')) return i
+    if (c === ';' || c === '|') return i
+  }
+  return line.length
+}
+
+/**
+ * Where a `cat`/`tee` clause containing a heredoc actually writes, or null.
+ *
+ * Deliberately narrow to `cat` and `tee`: a heredoc feeding any OTHER command
+ * (`python - <<EOF`, `node <<EOF`, `bc <<EOF`) writes through that program's
+ * own logic, which this cannot see — the honest answer is no target, not a
+ * guess. This is also why a `python3 - <<'PYX'` self-patch never produces a
+ * fabricated deliverable: its head word is `python3`, not `cat`/`tee`.
+ */
+function heredocTarget(segment) {
+  const words = shellWords(segment)
+  if (!words || !words.length) return null
+  const head = words[0]
+  if (head === 'cat') {
+    const m = segment.match(/(?:^|[^<>])(>{1,2})\s*(['"]?)([^\s'"<>|;&]+)\2/)
+    if (!m) return null
+    return { path: m[3], append: m[1] === '>>' }
+  }
+  if (head === 'tee') {
+    let append = false
+    let path = null
+    for (let i = 1; i < words.length; i++) {
+      const w = words[i]
+      if (w === '-a' || w === '--append') {
+        append = true
+        continue
+      }
+      if (w.startsWith('-') || w.startsWith('<<')) continue
+      path = w
+      break
+    }
+    return path ? { path, append } : null
+  }
+  return null
+}
+
+// Not `<<<` (a here-string, single line, no body) at either boundary.
+const HEREDOC_RE = /(?<!<)<<(?!<)(-)?[ \t]*(?:'([^']*)'|"([^"]*)"|(\\?[A-Za-z_][\w]*))/g
+
+/**
+ * Every `cat`/`tee` heredoc write recorded in a Bash command, in the order the
+ * heredocs start.
+ *
+ * The body is copied VERBATIM out of the transcript text between the header
+ * line and the terminator line (leading tabs stripped per-line for `<<-`,
+ * never for plain `<<`). A quoted delimiter (`'EOF'`, `"EOF"`, `\EOF`) means
+ * the shell performed no expansion on the body, so this text IS the file
+ * (`kind:'heredoc'`); a bare `<<EOF` means `$VAR`/`` `cmd` `` inside the body
+ * may have changed before the real write, so the text is still the best
+ * evidence available but marked `kind:'heredoc-unquoted'`.
+ *
+ * Scanning resumes AFTER the recovered body, never from wherever the regex
+ * would naturally continue: the body is agent-authored text and can itself
+ * contain `<<` (a bit-shift, a redirect inside a quoted example) that must not
+ * be mistaken for the start of a new heredoc.
+ */
+export function heredocWritesIn(command) {
+  const cmd = String(command ?? '')
+  const events = []
+  HEREDOC_RE.lastIndex = 0
+  let m
+  while ((m = HEREDOC_RE.exec(cmd))) {
+    const dash = Boolean(m[1])
+    let delimiter
+    let quoted
+    if (m[2] !== undefined) {
+      delimiter = m[2]
+      quoted = true
+    } else if (m[3] !== undefined) {
+      delimiter = m[3]
+      quoted = true
+    } else {
+      const raw = m[4] ?? ''
+      quoted = raw.startsWith('\\')
+      delimiter = quoted ? raw.slice(1) : raw
+    }
+    const matchStart = m.index
+    const afterDelim = HEREDOC_RE.lastIndex
+    const lineStart = cmd.lastIndexOf('\n', matchStart) + 1
+    let headerLineEnd = cmd.indexOf('\n', afterDelim)
+    if (headerLineEnd < 0) headerLineEnd = cmd.length
+    const bodyStart = headerLineEnd + 1
+
+    // Body lines up to the terminator line (delimiter alone, tabs stripped
+    // first when `<<-`). Not found before the command ends → not a real
+    // heredoc as far as this can tell; do not fabricate a body for it.
+    const lines = []
+    let pos = bodyStart
+    let terminatorEnd = -1
+    while (pos <= cmd.length) {
+      const nl = cmd.indexOf('\n', pos)
+      const atEnd = nl < 0
+      const rawLine = atEnd ? cmd.slice(pos) : cmd.slice(pos, nl)
+      const compareLine = (dash ? rawLine.replace(/^\t+/, '') : rawLine).replace(/\r$/, '')
+      if (compareLine === delimiter) {
+        terminatorEnd = atEnd ? cmd.length : nl + 1
+        break
+      }
+      lines.push(dash ? rawLine.replace(/^\t+/, '') : rawLine)
+      if (atEnd) break
+      pos = nl + 1
+    }
+    if (terminatorEnd < 0) {
+      HEREDOC_RE.lastIndex = cmd.length
+      continue
+    }
+
+    const headerLine = cmd.slice(lineStart, headerLineEnd)
+    const segStart = clauseStart(headerLine, matchStart - lineStart)
+    const segEnd = clauseEnd(headerLine, afterDelim - lineStart)
+    const target = heredocTarget(headerLine.slice(segStart, segEnd))
+    if (target) {
+      events.push({
+        path: target.path,
+        append: target.append,
+        content: lines.length ? `${lines.join('\n')}\n` : '',
+        kind: quoted ? 'heredoc' : 'heredoc-unquoted',
+      })
+    }
+    HEREDOC_RE.lastIndex = terminatorEnd
+  }
+  return events
+}
+
+/**
+ * Every single-quoted `printf`/`echo` literal write recorded in a Bash
+ * command.
+ *
+ * Deliberately narrow to the exact single-quoted spelling — `echo '…' > path`,
+ * `printf '%s' '…' > path` — rather than every printf/echo invocation: an
+ * unquoted or double-quoted argument carries the same `$VAR`-expansion risk as
+ * an unquoted heredoc, and a `-e` echo or a `%d`/`%x` printf format
+ * REINTERPRETS its argument instead of emitting it verbatim. Matching those too
+ * would confidently report the wrong bytes; the honest answer for them is no
+ * event, same as for a heredoc feeding a non-`cat`/`tee` command.
+ */
+export function literalRedirectWritesIn(command) {
+  const cmd = String(command ?? '')
+  const events = []
+  for (const segment of cmd.split(/(?:&&|\|\||[;|\n])/)) {
+    const echo = segment.match(/^\s*echo\s+'([^']*)'\s*(>{1,2})\s*(['"]?)([^\s'"<>|;&]+)\3\s*$/)
+    if (echo) {
+      events.push({ path: echo[4], append: echo[2] === '>>', content: `${echo[1]}\n`, kind: 'heredoc' })
+      continue
+    }
+    const pf = segment.match(/^\s*printf\s+'%s'\s+'([^']*)'\s*(>{1,2})\s*(['"]?)([^\s'"<>|;&]+)\3\s*$/)
+    if (pf) events.push({ path: pf[4], append: pf[2] === '>>', content: pf[1], kind: 'heredoc' })
+  }
+  return events
+}
+
+/** `path`, resolved against `cwd` when it is not already absolute. */
+function resolveWritePath(path, cwd) {
+  if (path.startsWith('/')) return path
+  if (typeof cwd === 'string' && cwd) {
+    const base = cwd.replace(/\/+$/, '')
+    return `${base}/${path.replace(/^\.\//, '')}`
+  }
+  return path
+}
+
+/** The tracked record `rawPath` (as spelled in a command) refers to, if any. */
+function findRecordFor(byPath, rawPath, cwd) {
+  for (const rec of byPath.values()) {
+    if (pathSpellings(rec.path, cwd).includes(rawPath)) return rec
+  }
+  return null
+}
+
+/**
+ * Apply one heredoc/literal write event to `byPath`, creating the record when
+ * no existing entry — tool-written or previously heredoc-written — already
+ * claims this spelling. Reuses `pathSpellings`/cwd resolution so a relative
+ * `cat > z.py <<EOF` merges into the SAME record as a later absolute
+ * `/app/z.py` Write, exactly as `bashWritesTo` already does for flagging.
+ *
+ * An OVERWRITE (`>`) resets `unrecoverable` exactly like a tool `Write` does:
+ * the full buffer is known again, verbatim for a quoted delimiter, best-effort
+ * for an unquoted one. An APPEND (`>>`) does not — it is only ever certain
+ * about the bytes it adds, not about whatever the buffer already held.
+ */
+function applyLiteralWrite(byPath, event, cwd, stepId) {
+  const resolved = resolveWritePath(event.path, cwd)
+  const rec = findRecordFor(byPath, event.path, cwd) ?? record(byPath, resolved, stepId)
+  if (event.append) {
+    rec.content += event.content
+  } else {
+    rec.content = event.content
+    rec.unrecoverable = 0
+    rec.lateWrites = 0
+    rec.nomatch = 0
+  }
+  rec.writeKind = event.kind
+  rec.step = stepId
+  return rec
+}
+
 /**
  * The final content of every file the agent wrote, REPLAYED in step order —
  * metadata writes, metadata edits AND the shell commands between them.
@@ -382,7 +644,10 @@ export function bashCommandsIn(step) {
  * the single `Write` and before the last `Edit` — the exact window the earlier
  * "after the last metadata event" rule excluded, which is why it counted zero on
  * both. A `sed -i` in that window IS replayed (its script is fully recorded);
- * a heredoc or a Python self-write is not, and marks the record incomplete.
+ * so, as of 2026-09-14, is a `cat`/`tee` heredoc or a single-quoted
+ * `printf`/`echo` redirect — see `heredocWritesIn`/`literalRedirectWritesIn`.
+ * A heredoc feeding any OTHER command, or a Python self-write, is still not,
+ * and still marks the record incomplete.
  *
  * A MISS IS RECORDED, NEVER SILENT. An Edit whose `oldString` is not in the
  * buffer (a malformed block, or a write this record never saw) increments
@@ -415,6 +680,10 @@ export function extractDeliverables(trajectory) {
           rec.unrecoverable = 0
           rec.lateWrites = 0
           rec.nomatch = 0
+          // A tool Write outranks anything a prior heredoc/literal redirect
+          // established for this same path — the origin of the FINAL bytes is
+          // the tool, not the shell.
+          rec.writeKind = 'tool'
         } else {
           rec.edits += 1
           const { content, ok } = applyEdit(
@@ -441,8 +710,25 @@ export function extractDeliverables(trajectory) {
     // the record, and the conservative reading — the shell went last — is the
     // one that flags rather than the one that reassures.
     for (const { command, cwd } of bashCommandsIn(step)) {
+      // Heredoc/literal writes FIRST, so a same-command `sed -i` that follows
+      // them (below) replays against the content they just established rather
+      // than against stale or empty content. KNOWN LIMITATION: if the shell
+      // order is reversed — a `sed -i` textually BEFORE a heredoc write to the
+      // same path, in the same recorded command — this still applies the
+      // heredoc's full overwrite last, so the final BYTES come out right, but
+      // the sed is not counted as a taint on the intermediate state. Not
+      // observed in any real trial scanned for this change; every real
+      // heredoc write precedes its later edits, never follows them.
+      const handled = new Set()
+      for (const event of [...heredocWritesIn(command), ...literalRedirectWritesIn(command)]) {
+        handled.add(applyLiteralWrite(byPath, event, cwd, stepId))
+      }
       for (const rec of byPath.values()) {
-        if (!bashWritesTo(command, rec.path, cwd)) continue
+        // A `sed -i` is checked FIRST and independently of the "already
+        // handled by heredoc" guard below: it is its own targeted match
+        // (command + this exact path), so a heredoc write followed by a sed
+        // in the SAME recorded command (write the script, then patch it) is
+        // still replayed correctly rather than skipped as "already handled".
         const scripts = sedProgramFor(command, rec.path, cwd)
         if (scripts) {
           const { content, ok } = replaySed(rec.content, scripts)
@@ -453,6 +739,11 @@ export function extractDeliverables(trajectory) {
             continue
           }
         }
+        // Already accounted for by the heredoc/literal replay above — do not
+        // ALSO run the GENERIC bashWritesTo check, which would see the same
+        // `> path` text and double-flag a write this pass just reconstructed.
+        if (handled.has(rec)) continue
+        if (!bashWritesTo(command, rec.path, cwd)) continue
         rec.lateWrites += 1
         rec.unrecoverable += 1
         rec.step = stepId
@@ -476,6 +767,9 @@ function record(byPath, path, stepId) {
       sedReplays: 0,
       lateWrites: 0,
       unrecoverable: 0,
+      // 'tool' (Write/Edit), 'heredoc' (quoted cat/tee/printf/echo) or
+      // 'heredoc-unquoted' (unquoted delimiter) — see `auditFidelity`.
+      writeKind: 'tool',
       fidelity: 'complete',
     }
     byPath.set(path, rec)
@@ -503,6 +797,13 @@ export function lateBashWrites(trajectory, paths) {
 /**
  * Mark each recovered file with whether its bytes can be trusted.
  *
+ * Four values. `complete` — Write/Edit only, as before this file recovered
+ * heredocs. `heredoc` — the last write establishing/appending to the buffer
+ * was a QUOTED `cat`/`tee`/`printf`/`echo` redirect, byte-exact. `heredoc-
+ * unquoted` — same, but the delimiter was bare, so shell expansion may have
+ * changed the real bytes. `incomplete` — as before: some write since the last
+ * FULL write is unrecoverable, and this record must NEVER be treated as final.
+ *
  * A record with `fidelity:'incomplete'` must NEVER be called final by any caller
  * — that is the contract this function exists to state, and the reason the
  * printed output says so loudly rather than in a field nobody reads.
@@ -515,7 +816,9 @@ export function auditFidelity(files) {
     const unrecoverable = f.unrecoverable ?? (f.nomatch ?? 0) + (f.lateWrites ?? 0)
     f.lateWrites = f.lateWrites ?? 0
     f.sedReplays = f.sedReplays ?? 0
-    f.fidelity = unrecoverable > 0 ? 'incomplete' : 'complete'
+    if (unrecoverable > 0) f.fidelity = 'incomplete'
+    else if (f.writeKind === 'heredoc' || f.writeKind === 'heredoc-unquoted') f.fidelity = f.writeKind
+    else f.fidelity = 'complete'
   }
   return files
 }
@@ -569,7 +872,14 @@ function main() {
       `  ${String(f.content.length).padStart(7)} bytes  ${f.path}  (${f.writes} write${f.writes === 1 ? '' : 's'}, ` +
         `${f.edits} edit${f.edits === 1 ? '' : 's'}` +
         (f.sedReplays ? `, ${f.sedReplays} sed replay${f.sedReplays === 1 ? '' : 's'}` : '') +
-        `, last at step ${f.step})`,
+        `, last at step ${f.step}, fidelity ${f.fidelity})`,
+    )
+  }
+  const unquoted = files.filter((f) => f.fidelity === 'heredoc-unquoted')
+  for (const f of unquoted) {
+    console.log(
+      `  ~ UNQUOTED HEREDOC ${f.path} — recovered from an unquoted <<DELIM, so a $VAR or backtick ` +
+        'command substitution inside the body may have been expanded before the real write. Best-effort, not exact.',
     )
   }
   const suspect = files.filter((f) => f.fidelity === 'incomplete')

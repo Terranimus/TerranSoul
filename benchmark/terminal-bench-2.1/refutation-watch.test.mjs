@@ -35,6 +35,7 @@ import {
   refutationAlarm,
   runRefutationWatch,
   BASE_DEFAULTS,
+  transportFor,
 } from './refutation-watch.mjs'
 
 /** The repo root, for the seeded config the threshold is calibrated against. */
@@ -1078,4 +1079,52 @@ test('the alert row and the recount scope both carry the exposure count', async 
       .pop(),
   )
   assert.equal(alerts.exposed_while_refuted, 1)
+})
+
+// ── THE MCP TRANSPORT MUST BOUND ITS OWN WAIT ────────────────────────────────
+//
+// ⛔ FAILS ON THE PRE-CHANGE TREE: `transportFor` called `fetch(url, {...})`
+// with no `signal` and took no options, so (a) there was nothing to inject a
+// fake fetch through and the first case below could not be written at all, and
+// (b) a fetch that never answers waited out undici's 300 s default. The watch
+// runs at the END of every trial against a brain the trial may have just
+// outlived — the MCP idle watchdog has shut the brain down mid-trial before
+// (2026-09-01, filter-js-from-html, where the Stop hook's own request came back
+// "upstream unreachable"). Across an unattended 89-task sweep that is up to
+// five dead minutes per trial, per call.
+test('the MCP transport bounds its wait, and a timeout is not fatal', async () => {
+  // Honours the signal the transport passes; without one it would hang forever,
+  // which is precisely the pre-change behaviour.
+  const hangingFetch = (_url, init) =>
+    new Promise((_resolve, reject) => {
+      init.signal.addEventListener('abort', () => reject(init.signal.reason))
+    })
+
+  const started = Date.now()
+  const call = transportFor('http://127.0.0.1:9/mcp', 'tok', {
+    timeoutMs: 150,
+    fetchImpl: hangingFetch,
+    label: 'test',
+  })
+  const out = await call({ name: 'brain_get_entry', arguments: { id: 1 } })
+  const elapsed = Date.now() - started
+
+  assert.ok(elapsed < 5000, `waited ${elapsed}ms — the bound did not fire`)
+  // NOT a throw: crediting is post-processing and the trial's result.json is
+  // already written, so an unreachable brain must cost one call, not the run.
+  assert.equal(out.res.ok, false)
+  assert.match(out.text, /timed out after 150ms/)
+})
+
+test('every MCP call carries an abort signal', async () => {
+  let seen = null
+  const call = transportFor('http://127.0.0.1:9/mcp', 'tok', {
+    fetchImpl: (_u, init) => {
+      seen = init
+      return Promise.resolve({ ok: true, status: 200, text: async () => '{"result":{}}' })
+    },
+  })
+  await call({ name: 'brain_search', arguments: {} })
+  assert.ok(seen && seen.signal, 'the request was sent with no AbortSignal')
+  assert.equal(typeof seen.signal.aborted, 'boolean')
 })

@@ -331,11 +331,10 @@ Two tools exist for this and are loaded above:
   back. It detects when you are going in circles and tells you so, which is
   cheaper than noticing it yourself several turns later.
 
-**Spend the budget you were given.** You were told your wall-clock allowance at
-the top of this file. Finishing early is not a virtue here: if you have time
-left and any part of your solution rests on an assumption you have not tested,
-test it. If a check passes, try to make it fail — a check that cannot fail told
-you nothing. Prefer one more verification over one more explanation.
+**Use the budget for the work, not for the wall.** Spend spare time testing an
+assumption you have not tested, or making a passing check fail — a check that
+cannot fail told you nothing. But stop with margin: overrunning ERRORS the
+trial and scores 0 with correct work on disk.
 
 **A tool call that succeeded is not a result that is correct.** An exit code of
 0 means the command ran, not that it did what you wanted. Measure the effect you

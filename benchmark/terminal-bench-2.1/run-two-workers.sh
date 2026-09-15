@@ -55,7 +55,30 @@ if [ "${#ALL_TASKS[@]}" -eq 0 ]; then
   exit 2
 fi
 
-STAMP="$(date +%m%d%H%M)"
+# The stamp is INHERITED when a launcher supplies one. launch-sweep-detached.sh
+# announces the job-prefix pair before this script has started, and the operator
+# greps for exactly those prefixes; deriving a second stamp here would make that
+# announcement wrong whenever the launch crosses a minute boundary.
+STAMP="${TB_SWEEP_STAMP:-$(date +%m%d%H%M)}"
+P0="ts${STAMP}w0"
+P1="ts${STAMP}w1"
+LOGS="$REPO/mcp-data/logs"
+JOBS_ROOT="${TB_JOBS_DIR:-$HERE/jobs}"
+HALT_FILE="$REPO/mcp-data/.tb-sweep-halt-$STAMP"
+SWEEP_LOCK="${TB_LOCK_FILE:-$REPO/mcp-data/.tb-sweep.lock}"
+mkdir -p "$LOGS" "$JOBS_ROOT" "$REPO/mcp-data"
+rm -f "$HALT_FILE"
+
+# ── NON-INDEPENDENCE, DISCLOSED ONCE, AT THE TOP ─────────────────────────────
+# TB_REFUTE_WATCH defaults to 1 and the online audit is wanted, but that means a
+# recount applied after one trial changes what LATER trials of the same task are
+# served. run-dg.sh says this per trial, where it scrolls past; a 20-40 h sweep
+# needs it said once where the operator reads it, because it is a property of
+# the NUMBER this run produces.
+echo "[2w] NOT INDEPENDENT: TB_REFUTE_WATCH=${TB_REFUTE_WATCH:-1} (online refutation watch is ON)."
+echo "[2w] A recount applied after one trial changes what later trials of the same task"
+echo "[2w] are served, and cross-trial learning is on by design in learn mode. Label any"
+echo "[2w] published number. TB_REFUTE_WATCH=observe records without writing; 0 disables."
 
 # --- reclaiming a port from an ORPHANED proxy ---------------------------------
 #
@@ -107,6 +130,21 @@ pid_is_alive() { # <pid>
   else
     kill -0 "$pid" 2>/dev/null
   fi
+}
+
+# A WORKER'S PID IS AN MSYS PID, AND taskkill CANNOT SEE IT.
+# `ps -W` prints both: column 1 is the msys pid (what `kill` and the
+# `.tb-par<w>.lock` watchdog protocol use) and column 4 is the WINPID (what
+# taskkill, and therefore any kill that must reach a native python/docker child,
+# needs). Confusing the two is how a "kill the sibling" ends up killing nothing
+# and leaking its containers.
+_msys_pid_alive() { # <msys pid>
+  local pid="$1"; [ -n "$pid" ] || return 1
+  ps -W 2>/dev/null | awk -v p="$pid" '$1==p{f=1} END{exit !f}'
+}
+_msys_to_winpid() { # <msys pid> -> WINPID on stdout
+  local pid="$1"; [ -n "$pid" ] || return 0
+  ps -W 2>/dev/null | awk -v p="$pid" '$1==p{print $4; exit}'
 }
 
 pid_is_auth_proxy() { # <pid> — identity gate before any kill
@@ -178,6 +216,51 @@ _release_port_claims() {
   return 0
 }
 
+# ── THE SWEEP LOCK, WHICH THIS LAUNCHER NEVER TOOK ───────────────────────────
+#
+# ⛔ `.tb-sweep.lock` is the interlock redo-task.sh and launch-detached.sh both
+# check before starting ("Two runs fight over proxy port 7425 and both die").
+# Only run-sweep*.sh ever WROTE it. So a redo launched during a two-worker sweep
+# saw no lock, started on the default port 7425, and collided with worker 0 —
+# the exact hazard the lock exists to prevent, unguarded for the one launcher
+# that runs for 40 hours. The protocol is the file's PID, tested for liveness
+# with `ps -W`, exactly as the readers test it.
+_take_sweep_lock() {
+  if [ -f "$SWEEP_LOCK" ]; then
+    local pid
+    pid="$(cat "$SWEEP_LOCK" 2>/dev/null | tr -d '[:space:]')"
+    if [ -n "$pid" ] && [ "$pid" != "$$" ] && _msys_pid_alive "$pid"; then
+      echo "[2w] REFUSING: a sweep or redo is already running as pid $pid (lock: $SWEEP_LOCK)." >&2
+      echo "[2w] One bench at a time is the standing limit. Stop it, or wait for it." >&2
+      return 1
+    fi
+    echo "[2w] stale sweep lock for dead pid ${pid:-?} — clearing"
+  fi
+  printf '%s\n' "$$" > "$SWEEP_LOCK"
+  return 0
+}
+_release_sweep_lock() {
+  [ "$(cat "$SWEEP_LOCK" 2>/dev/null | tr -d '[:space:]')" = "$$" ] && rm -f "$SWEEP_LOCK"
+  return 0
+}
+
+# The bench brain exists only for the duration of a bench and is torn down after
+# it (the standing one-MCP rule), so the teardown belongs on the EXIT path where
+# it also covers the halt branches — not at the bottom of the happy path.
+_stop_bench_brain() {
+  [ "${TB_BENCH_BRAIN_STARTED:-0}" = "1" ] || return 0
+  bash "$BENCH_BRAIN_STOP" 2>&1 | sed 's/^/[2w] /' || true
+  return 0
+}
+
+_sweep_cleanup() {
+  _stop_bench_brain
+  _release_sweep_lock
+  _release_port_claims
+  [ -n "${DRIVER:-}" ] && rm -f "$DRIVER"
+  return 0
+}
+
 # One worker per proxy port. Tasks are dealt ALTERNATELY rather than split down
 # the middle so a run of slow tasks cannot land entirely on one worker and leave
 # the other idle for the second half of the sweep.
@@ -210,22 +293,115 @@ echo "[2w] ${#ALL_TASKS[@]} task(s): worker0=${#W0[@]} on :7425, worker1=${#W1[@
 # the download again.
 export TB_AGENT_CACHE_ID="${TB_AGENT_CACHE_ID:-$STAMP}"
 
+# Overridable so the regression tests can stand a recording stub in for each
+# one and assert it was really invoked. Production never sets them.
+PREFLIGHT_CMD="${TB_PREFLIGHT_CMD:-$HERE/preflight-sweep.sh}"
+BENCH_BRAIN_START="${TB_BENCH_BRAIN_START_CMD:-$HERE/start-bench-brain.sh}"
+BENCH_BRAIN_STOP="${TB_BENCH_BRAIN_STOP_CMD:-$HERE/stop-bench-brain.sh}"
+
 # Reclaim both ports BEFORE anything else happens. Placed above the prefix
 # registration deliberately: a refusal here must cost nothing -- no proxy
 # started, no prefix registered, no container created, nothing to unwind.
-trap _release_port_claims EXIT
+trap _sweep_cleanup EXIT
+_take_sweep_lock || { echo "[2w] aborting before any trial ran." >&2; exit 2; }
 for _port in 7425 7426; do
   reclaim_port "$_port" || { echo "[2w] aborting before any trial ran." >&2; exit 2; }
 done
+
+# ── THE PRE-LAUNCH CHECKLIST, RUN BEFORE ANYTHING IS SPENT ───────────────────
+# Every item it checks has already cost measured trials, and all of them are
+# cheap to check and expensive to discover 20 hours in. A missing checklist
+# script is itself a refusal: a sweep that cannot verify its own preconditions
+# is the failure mode this whole file is being hardened against.
+if [ ! -f "$PREFLIGHT_CMD" ]; then
+  echo "[2w] REFUSING: no preflight at $PREFLIGHT_CMD." >&2
+  exit 2
+fi
+# ORDER: the brain is started BEFORE the checklist because the checklist's first
+# item verifies it. Measured 2026-09-15 03:07: a resume after a quota halt (whose
+# halt path had stopped the bench brain, correctly) refused itself with
+# "bench brain :7424 no /health answer" -- the launcher's own start step sat
+# AFTER the check that needed it. The first launch only worked because an
+# operator had started the brain by hand.
+# ── THE ISOLATED BENCH BRAIN ─────────────────────────────────────────────────
+# Nothing in this directory used to start it, and run-dg.sh's repair instruction
+# (`node scripts/copilot-start-mcp.mjs`) reuses the PRODUCTION tray on :7423 and
+# exits 0 having bound nothing on :7424 — so the documented fix for a missing
+# bench brain silently succeeds while leaving it missing. Idempotent: a brain
+# already up, ready and isolated is left strictly alone.
+if [ "${TB_SKIP_BENCH_BRAIN:-0}" != "1" ]; then
+  if ! bash "$BENCH_BRAIN_START"; then
+    echo "[2w] REFUSING: the isolated bench brain is not usable — see above." >&2
+    exit 2
+  fi
+  TB_BENCH_BRAIN_STARTED=1
+fi
+
+echo "[2w] running the pre-launch checklist ($PREFLIGHT_CMD)"
+if ! TB_SWEEP_LOCK_OWNER="$$" bash "$PREFLIGHT_CMD" "$TASKS_FILE"; then
+  echo "[2w] REFUSING: the pre-launch checklist failed — see the FAIL lines above." >&2
+  echo "[2w] Nothing was started, no prefix was registered, nothing to unwind." >&2
+  exit 2
+fi
 
 # Register both prefixes with the merge NOW, not at the end. A prefix that is
 # only appended on success is invisible to `merge-sweep.sh` when a worker dies
 # mid-run, and the whole worker's results silently vanish from the total — the
 # failure that hid 60 trials from an earlier merge.
-for p in "ts${STAMP}w0" "ts${STAMP}w1"; do
+for p in "$P0" "$P1"; do
   echo "$p" >> "$REPO/mcp-data/.tb-sweep-prefixes.txt"
 done
 sort -u -o "$REPO/mcp-data/.tb-sweep-prefixes.txt" "$REPO/mcp-data/.tb-sweep-prefixes.txt"
+
+# ── COHORT IDENTITY, PINNED THE WAY redo-task.sh PINS IT ─────────────────────
+#
+# ⛔ THE SWEEP AND THE REDO MUST BE THE SAME HARNESS, because the last five
+# sam-cell-seg conversions were measured through redo-task.sh. That script reads
+# TB_MODEL / TB_DATASET from the cohort's own launch file and REFUSES when the
+# environment disagrees, after an exported TB_AGENT beat the launch file on all
+# 10 runs of one session and merged 1.0s into a cohort they did not belong to
+# (2026-08-12 forensics). This launcher set neither, and relied on run-dg.sh's
+# internal fallbacks instead — which happen to agree today (`claude-opus-5`) and
+# are one edit away from not agreeing, silently, in the direction that
+# invalidates a whole task's history.
+#
+# TB_AGENT stays HARDCODED here rather than inherited: this launcher exists to
+# measure one agent, and "keep what the caller exported" is precisely the
+# default that lost those trials.
+LAUNCH_REF="${TB_LAUNCH_REF:-$REPO/mcp-data/.tb-par0.launch}"
+TB_MODEL="${TB_MODEL:-claude-opus-5}"
+TB_DATASET="${TB_DATASET:-}"
+if [ -f "$LAUNCH_REF" ]; then
+  for _pair in "TB_MODEL:$(tr ' ' '\n' < "$LAUNCH_REF" | sed -n 's/^TB_MODEL=//p' | head -1)" \
+               "TB_AGENT:$(tr ' ' '\n' < "$LAUNCH_REF" | sed -n 's/^TB_AGENT=//p' | head -1)"; do
+    _var="${_pair%%:*}"; _want="${_pair#*:}"
+    [ -n "$_want" ] || continue
+    eval "_have=\"\${$_var:-}\""
+    [ "$_var" = "TB_AGENT" ] && _have="terransoul_hook:TerranSoulHook"
+    if [ "$_have" != "$_want" ] && [ "${TB_IDENTITY_OVERRIDE:-0}" != "1" ]; then
+      echo "[2w] REFUSING: $_var=$_have, but the cohort's launch file says $_want." >&2
+      echo "[2w] $LAUNCH_REF is the single source of truth for which eval bucket these" >&2
+      echo "[2w] trials join. A sweep under a different agent/model is silently excluded" >&2
+      echo "[2w] from the number, or pooled in by an identity-blind merge as a result the" >&2
+      echo "[2w] cohort never earned. Set TB_IDENTITY_OVERRIDE=1 to state otherwise." >&2
+      exit 2
+    fi
+  done
+fi
+echo "[2w] identity : agent=terransoul_hook:TerranSoulHook model=$TB_MODEL dataset=${TB_DATASET:-<local path>}"
+
+# ── RUN A SNAPSHOT OF THE DRIVER, NOT THE REPO FILE ──────────────────────────
+# redo-task.sh already does this and states why: bash reads a script by BYTE
+# OFFSET as it executes, so editing run-dg.sh mid-run makes the running shell
+# resume at a shifted position and die minutes later with a fragment of a word
+# ("line 1323: ncy: command not found"). That cost a trial twice in one session.
+# A 40-hour sweep is the run most likely to overlap an edit, and it was the one
+# entry point still reading the live file. ONE snapshot for the whole sweep, so
+# both workers measure the same driver.
+export TB_DRIVER_HOME="$HERE"
+DRIVER="$(mktemp -t run-dg-sweep.XXXXXX 2>/dev/null || mktemp)"
+cp "$HERE/run-dg.sh" "$DRIVER"
+echo "[2w] driver snapshot: $DRIVER (edits to run-dg.sh during this sweep are safe)"
 
 # Did the job just written for THIS worker break around the agent rather than
 # fail on the task?
@@ -307,12 +483,237 @@ sys.exit(1)
 " "$job_dir" 2>/dev/null
 }
 
-run_worker() {
-  local port="$1" prefix="$2"; shift 2
-  local t attempt job_dir
-  for t in "$@"; do
+# The newest job dir this prefix has produced, or empty. Scoped to the prefix so
+# the OTHER worker's concurrent job is never inspected.
+_newest_job_dir() { # <prefix>
+  ls -1dt "$JOBS_ROOT/$1"-*/ 2>/dev/null | head -1
+}
+
+# --- HEADROOM-AWARE TASK SELECTION (TBENCH-HEADROOM-ORDER-1) -----------------
+#
+# MEASURED 2026-09-15 00:13 ON THE LIVE ts09142020 SWEEP: BOTH WORKERS IDLE,
+# 70 TASKS OWED, AND NEITHER WAS BLOCKED ON ANYTHING IT COULD NOT HAVE RUN.
+#
+# run-dg.sh gates every trial on the credential outliving it -- max(40,
+# ceiling/60 + 30) minutes -- and that gate is CORRECT: a trial that outlives
+# its token dies mid-run with the agent already 98 turns in (sam-cell-seg,
+# 2026-09-13, TBENCH-TOKEN-CEILING-1). Nothing here relaxes it.
+#
+# What was wrong is the SCHEDULING. The gate was applied to whatever task the
+# deal happened to put at the head of the list:
+#
+#   worker 0  next task ceiling 3600 s -> gate  90 min, credential  84 min left
+#             "waiting 5067s for the credential to reach expiry, then re-poking"
+#   worker 1  next task build-pov-ray, 12000 s -> gate 230 min, 117 min left
+#             "waiting 7089s ..."
+#
+# token-refresh.sh pokes the host CLI, which rotates ONLY once the token has
+# actually expired, so the park is the token's whole remaining life: 1.5-2 h of
+# both containers idle per ~8 h token cycle. Meanwhile 48 of the 89 tasks here
+# have a 900 s ceiling whose gate is only max(40, 15+30) = 45 min -- every one
+# of them fit in the headroom that was being waited out.
+#
+# So the worker deals by FIT, not by position: if the head task's gate exceeds
+# the current headroom, the first remaining task whose gate DOES fit runs
+# instead, and the skipped task stays at the head of the owed list for a later
+# pass (its ledger entry is untouched -- it is unmeasured, not done). Only when
+# NOTHING in the list fits does the worker fall through to run-dg's park-and-
+# repoke, which is then the right behaviour: there is genuinely no work it can
+# start before the rotation.
+#
+# PURITY: this is a property of the RUNNER -- a task's declared timeout and a
+# credential's expiry. No task name is special-cased, no ordering is hardcoded,
+# and the list a worker owes is unchanged; only the order it is drained in
+# adapts. A sweep whose credential is long-lived (TB_TOKEN_STATIC=1) or whose
+# headroom is unreadable reorders NOTHING and behaves exactly as before.
+
+# `_token_mins_left` lives in token-refresh.sh, which is the ONE place the
+# credential is read (its own header records the cost of copy-pasting it: three
+# redo attempts died on a 2-day-stale token because a second copy was never
+# wired in). Sourced, never reimplemented.
+TOKEN_REFRESH_LIB="${TB_TOKEN_REFRESH_LIB:-$HERE/token-refresh.sh}"
+# shellcheck source=/dev/null
+[ -r "$TOKEN_REFRESH_LIB" ] && . "$TOKEN_REFRESH_LIB"
+
+# A task's own wall-clock ceiling, derived the way run-dg.sh derives it -- same
+# two lookup paths (local clone, then harbor's content-hash cache) and the same
+# SECTION-AWARE awk, because a bare `grep -m1 timeout_sec` reads `[verifier]`
+# first and answers 120 for a task the agent has 7200 s on. two-workers.test.sh
+# proves this byte-equal against run-dg.sh's own block on every local task.
+_task_ceiling_s() { # <task> -> ceiling seconds, or empty when unknown
+  local task="$1" toml sec
+  task="${task#*/}"                 # registry ids arrive namespaced: `org/name`
+  [ -n "$task" ] || return 0
+  toml="${TB21_DIR:-/d/Git/terminal-bench-2-1}/tasks/$task/task.toml"
+  if [ ! -f "$toml" ]; then
+    toml="$(ls -1 "$HOME/.cache/harbor/tasks/packages"/*/"$task"/*/task.toml 2>/dev/null | head -1)"
+  fi
+  [ -n "$toml" ] && [ -f "$toml" ] || return 0
+  sec="$(awk '
+    /^[[:space:]]*\[/ { section = $0 }
+    section ~ /\[agent\]/ && /timeout_sec/ {
+      if (match($0, /[0-9]+(\.[0-9]+)?/)) { print substr($0, RSTART, RLENGTH); exit }
+    }' "$toml" 2>/dev/null)"
+  [ -n "$sec" ] || sec="$(grep -m1 -oE 'timeout_sec[[:space:]]*=[[:space:]]*[0-9.]+' \
+          "$toml" 2>/dev/null | grep -oE '[0-9.]+' | head -1)"
+  sec="${sec%%.*}"
+  case "$sec" in ''|*[!0-9]*) return 0 ;; esac
+  [ "$sec" -gt 0 ] || return 0
+  printf '%s' "$sec"
+}
+
+# Memoised: the same task.toml files are consulted once per selection, and a
+# selection happens before every task for the whole sweep.
+declare -A _GATE_MIN_CACHE=()
+
+# The credential gate run-dg.sh will actually apply to this task, in minutes.
+# EXACTLY token-refresh.sh's `_token_min_minutes`: max(40, ceiling/60 + 30),
+# with TB_TOKEN_MIN_MINUTES overriding all of it. A different formula here would
+# make the worker reorder against a gate nothing enforces.
+_task_gate_min() { # <task> -> gate minutes
+  local task="$1" gate ceiling want
+  if [ -n "${TB_TOKEN_MIN_MINUTES:-}" ]; then printf '%s' "$TB_TOKEN_MIN_MINUTES"; return 0; fi
+  gate="${_GATE_MIN_CACHE[$task]:-}"
+  if [ -z "$gate" ]; then
+    gate=40
+    ceiling="$(_task_ceiling_s "$task")"
+    if [ -n "$ceiling" ]; then
+      want=$(( ceiling / 60 + 30 ))
+      [ "$want" -gt "$gate" ] && gate="$want"
+    fi
+    _GATE_MIN_CACHE["$task"]="$gate"
+  fi
+  printf '%s' "$gate"
+}
+
+# Whole minutes of life left on the host credential, or empty when that cannot
+# be answered -- and EMPTY MEANS DO NOT REORDER. An expired token reads negative
+# and lands here too, which is correct: nothing fits, and poking rotates it
+# immediately, so the existing path is already the fast one.
+_credential_headroom_min() { # -> minutes, or empty
+  local mins
+  # TEST HOOK. Production NEVER sets TB_HEADROOM_MIN_OVERRIDE -- a real headroom
+  # comes from the host credential and nothing else. Accepts a literal number of
+  # minutes or a path to a file holding one; the file is re-read before every
+  # task so a test can make the headroom RISE the way a real rotation does,
+  # without a credential.
+  if [ -n "${TB_HEADROOM_MIN_OVERRIDE:-}" ]; then
+    if [ -r "$TB_HEADROOM_MIN_OVERRIDE" ]; then
+      mins="$(tr -d '[:space:]' < "$TB_HEADROOM_MIN_OVERRIDE")"
+    else
+      mins="$TB_HEADROOM_MIN_OVERRIDE"
+    fi
+  else
+    # A long-lived token (TB_TOKEN_STATIC=1) is not gated on .credentials.json
+    # at all, so reordering against that file would be noise about a constraint
+    # that does not exist. Same for a sweep that skips the refresh entirely.
+    [ "${TB_TOKEN_STATIC:-0}" = "1" ] && return 0
+    [ "${TB_SKIP_TOKEN_REFRESH:-0}" = "1" ] && return 0
+    command -v _token_mins_left >/dev/null 2>&1 || return 0
+    mins="$(_token_mins_left)"          # "unreadable" when there is no credential
+  fi
+  mins="${mins%%.*}"
+  case "$mins" in ''|*[!0-9]*) return 0 ;; esac
+  printf '%s' "$mins"
+}
+
+# Which of the owed tasks to deal NEXT: the head, unless its gate cannot fit in
+# the headroom and some later task's can. Prints an index into the list it was
+# given; announces a reorder on stderr (stdout is the return channel, and the
+# worker's stderr is tee'd into the same log).
+_headroom_pick_index() { # <prefix> <task...> -> index
+  local prefix="$1"; shift
+  local headroom head_gate gate j
+  local args=("$@")
+  [ "${#args[@]}" -gt 1 ] || { printf '0'; return 0; }
+  headroom="$(_credential_headroom_min)"
+  [ -n "$headroom" ] || { printf '0'; return 0; }
+  head_gate="$(_task_gate_min "${args[0]}")"
+  [ "$head_gate" -gt "$headroom" ] || { printf '0'; return 0; }
+  for j in "${!args[@]}"; do
+    [ "$j" -eq 0 ] && continue
+    gate="$(_task_gate_min "${args[$j]}")"
+    if [ "$gate" -le "$headroom" ]; then
+      echo "[2w:$prefix] headroom $headroom min < gate $head_gate min for ${args[0]}; running ${args[$j]} (gate $gate min) first" >&2
+      printf '%s' "$j"
+      return 0
+    fi
+  done
+  # NOTHING fits. Fall through to the head and let run-dg.sh park and re-poke:
+  # with no runnable work left, waiting for the rotation IS the work.
+  printf '0'
+  return 0
+}
+
+# Rewrite <file> with exactly the tasks still owed. Called after EVERY task, not
+# only on a halt: a worker killed by its sibling (or by the watchdog, or by a
+# closed console) cannot write anything at that moment, so the resume list has
+# to be correct on disk BEFORE the kill arrives.
+#
+# ⛔ AN EXPLICIT LIST, NOT A SUFFIX INDEX. A refused task leaves a HOLE: refusing
+# r1 and then measuring r3 owes {r1, r5}, which no "from index N" can express.
+# Writing the suffix would silently drop the one task the refusal branch exists
+# to protect — it is unmeasured, and a resume that skips it banks a 0 nobody
+# earned, which is the same defect one level up.
+_write_remaining() { # <file> <task...>
+  local f="$1"; shift
+  if [ "$#" -gt 0 ]; then printf '%s\n' "$@" > "$f"; else : > "$f"; fi
+  return 0
+}
+
+# One file, read by the parent, that says a worker has stopped for a reason the
+# SIBLING must also stop for. A return code cannot carry this: `wait` on two
+# background jobs in bash 4.4 gives no way to learn which one ended or why while
+# the other is still burning tasks into the same wall.
+_signal_halt() { # <kind> <detail>
+  printf '%s|%s\n' "$1" "$2" > "$HALT_FILE"
+  return 0
+}
+
+_worker_body() {
+  local port="$1" prefix="$2" w="$3"; shift 3
+  local remaining="$JOBS_ROOT/$prefix.remaining"
+  local idx j t x attempt job_dir before_dir rc refusals=0
+  # Everything this worker still owes. A task leaves it only once a job dir
+  # proves it was really run.
+  local unrun=("$@") keep=()
+  # The tasks not yet DEALT, in list order. Deliberately separate from `unrun`:
+  # a task is dealt exactly once (a refusal does not re-deal it, precisely as
+  # the positional loop never revisited an index), while `unrun` holds what is
+  # still OWED -- which a refused or deferred task remains.
+  local queue=("$@") qkeep=()
+
+  # sweep-status.sh anchors on this exact line ("everything after it belongs to
+  # the current run"), and the logs are APPENDED across launches, so without it
+  # every status read reports a previous sweep's numbers as if they were live.
+  echo "[sweep] job prefix: $prefix"
+  _write_remaining "$remaining" ${unrun[@]+"${unrun[@]}"}
+
+  while [ "${#queue[@]}" -gt 0 ]; do
+    # DEAL BY FIT, NOT BY POSITION (TBENCH-HEADROOM-ORDER-1). Re-evaluated
+    # before every task because the headroom moves under us: it falls as the
+    # sweep runs and jumps back to ~473 min the moment the host CLI rotates the
+    # credential. The task this defers keeps its place at the head of the OWED
+    # list -- it is unmeasured, not done.
+    idx="$(_headroom_pick_index "$prefix" ${queue[@]+"${queue[@]}"})"
+    t="${queue[$idx]}"
+    qkeep=()
+    for j in "${!queue[@]}"; do [ "$j" = "$idx" ] || qkeep+=("${queue[$j]}"); done
+    queue=(${qkeep[@]+"${qkeep[@]}"})
     for attempt in 1 2; do
       echo "[2w:$prefix] --> $t (attempt $attempt)"
+      # The shape sweep-status.sh counts as a started task and reads back as
+      # "now: <task>".
+      echo "[sweep]   task $t (worker $w, attempt $attempt)"
+      before_dir="$(_newest_job_dir "$prefix")"
+      # The bench brain can be killed from OUTSIDE the sweep: on 2026-09-14 both
+      # brains (:7423 and :7424) vanished at the same minute with no crash trace
+      # while no trial was running. start-bench-brain.sh is idempotent -- a
+      # healthy :7424 costs one health probe -- so a dead brain is relaunched
+      # BEFORE this task rather than after two preflight refusals have halted
+      # the worker. Its exit code is advisory here; run-dg's own cold-brain
+      # gate is what decides whether the trial may start.
+      bash "$BENCH_BRAIN_START" --per-task "$t" >/dev/null 2>&1         || echo "[2w:$prefix] bench brain not restartable before $t (start-bench-brain.sh failed); run-dg's gate decides" >&2
       # ONE TASK PER JOB. This is the whole point: one job = one proxy = one log
       # = one TRIAL_SCOPE = one trial.
       #
@@ -326,6 +727,14 @@ run_worker() {
       # `|| true` because a single task's non-zero exit must not abandon the
       # rest of the list. The exit code is not the verdict anyway — the reward
       # is read from result.json, per the playbook.
+      #
+      # ⛔ THE ENV BLOCK MATCHES redo-task.sh's, VARIABLE FOR VARIABLE. The last
+      # five sam-cell-seg conversions were measured through the redo path, so a
+      # sweep that composes a different environment is not re-measuring the same
+      # harness. TB_MODEL/TB_DATASET are pinned above from the cohort's launch
+      # file; PYTHONIOENCODING/PYTHONUTF8 are set because the redo sets them and
+      # a UTF-8 mismatch surfaces as a python traceback in post-processing, not
+      # as anything that looks like an encoding problem.
       TB_AGENT="terransoul_hook:TerranSoulHook" \
       TB_TASKS="$t" \
       TB_CONCURRENCY=1 \
@@ -334,11 +743,53 @@ run_worker() {
       TB_PROXY_PORT="$port" \
       TB_JOB_PREFIX="$prefix" \
       TB_PROXY_MODE=learn \
-        bash "$HERE/run-dg.sh" "" || true
+      TB_DEFER_WRITES="${TB_DEFER_WRITES:-0}" \
+      TB_MODEL="$TB_MODEL" \
+      TB_DATASET="$TB_DATASET" \
+      PYTHONIOENCODING=utf-8 PYTHONUTF8=1 \
+        bash "$DRIVER" ""
+      # The exit code is CAPTURED, not discarded. `|| true` used to sit here, on
+      # the correct reasoning that a single task's non-zero exit must not abandon
+      # the list -- but it also threw away the only signal that separates "the
+      # task failed" from "the driver refused before it started", and this shell
+      # runs without `set -e`, so nothing is abandoned by reading it. The reward
+      # still comes from result.json, per the playbook; this code only ever
+      # classifies a run that produced no result at all.
+      rc=$?
 
-      # The newest job this worker's prefix produced. Scoped to the prefix so
-      # the OTHER worker's concurrent job is never inspected.
-      job_dir="$(ls -1dt "$HERE/jobs/$prefix"-*/ 2>/dev/null | head -1)"
+      job_dir="$(_newest_job_dir "$prefix")"
+
+      # ── PREFLIGHT REFUSAL: NO NEW JOB DIR AT ALL ─────────────────────────────
+      #
+      # ⛔ EVERY GUARD BELOW READS THE PREVIOUS TASK'S JOB DIR WHEN THIS ONE
+      # NEVER PRODUCED ONE. All of run-dg.sh's preflights (brain health, MCP
+      # token, container TLS, credential) run BEFORE it invokes harbor, so a
+      # refusal exits without harbor ever creating `jobs/<prefix>-<stamp>/`.
+      # `ls -1dt ... | head -1` then returns the job from the LAST task, or
+      # nothing at all on the first one, and `job_was_infra_failure` answers a
+      # question about a trial that did not happen. With the bench brain missing
+      # or a token dead, all 45 tasks refuse in seconds and the worker prints
+      # "worker finished" having measured nothing.
+      #
+      # Comparing against the newest dir taken BEFORE the call is what
+      # distinguishes them: same dir (or still none) means harbor was never
+      # reached. Two in a row is a broken environment, not a flake -- retrying
+      # the same instant refusal cannot help, and neither can the next task.
+      if [ "$job_dir" = "$before_dir" ]; then
+        refusals=$((refusals+1))
+        echo "[2w:$prefix] $t produced NO job dir — run-dg.sh exited $rc before harbor ran." >&2
+        echo "[2w:$prefix] That is a PREFLIGHT REFUSAL (brain/MCP token/credential/TLS), not a" >&2
+        echo "[2w:$prefix] task result. Nothing was measured; the task stays UNMEASURED." >&2
+        if [ "$refusals" -ge 2 ]; then
+          echo "[sweep] HALT worker $w: preflight refused twice (run-dg.sh exit $rc)" >&2
+          echo "[2w:$prefix] Two consecutive refusals is a broken environment, not a flake." >&2
+          echo "[2w:$prefix] Read the run-dg.sh REFUSING line above, fix it, and resume." >&2
+          _signal_halt "preflight" "worker $w: run-dg.sh exit $rc, no job dir, twice in a row"
+          return 4
+        fi
+        break
+      fi
+      refusals=0
       # QUOTA FIRST. It is a subset of the zero-token condition below, and
       # retrying it cannot succeed -- so it must be tested before the retry.
       if job_hit_quota "$job_dir"; then
@@ -347,6 +798,7 @@ run_worker() {
         echo "[2w:$prefix] wall-clock time, not after a delay. STOPPING this worker so the" >&2
         echo "[2w:$prefix] remaining tasks stay UNMEASURED rather than being marked failed." >&2
         echo "[2w:$prefix] Re-run the remaining list after the reset." >&2
+        _signal_halt "quota" "worker $w: ApiRateLimitError / session limit on $t"
         return 3
       fi
       if [ "$attempt" -eq 1 ] && job_was_infra_failure "$job_dir"; then
@@ -384,18 +836,175 @@ run_worker() {
         echo "[2w:$prefix] STOPPING this worker so the remaining tasks stay UNMEASURED" >&2
         echo "[2w:$prefix] rather than being recorded as failures nobody earned." >&2
         echo "[2w:$prefix] Re-run the remaining list once the account/session recovers." >&2
+        _signal_halt "outage" "worker $w: zero-token on both attempts of $t"
         return 3
       fi
+      # MEASURED: this task produced a job dir and was neither quota nor a
+      # double outage, so it leaves the owed list. Recorded here rather than
+      # after the inner loop so a `break` out of a REFUSAL never reaches it.
+      keep=()
+      for x in ${unrun[@]+"${unrun[@]}"}; do [ "$x" = "$t" ] || keep+=("$x"); done
+      unrun=(${keep[@]+"${keep[@]}"})
+      _write_remaining "$remaining" ${unrun[@]+"${unrun[@]}"}
       break
     done
   done
+  rm -f "$remaining"
   echo "[2w:$prefix] worker finished"
+  return 0
 }
 
-run_worker 7425 "ts${STAMP}w0" "${W0[@]}" &
+# The watchdog/status contract, which this launcher wrote NONE of.
+# halt-on-outage.sh polls `mcp-data/.tb-par<w>.lock` for a live pid and greps
+# `mcp-data/logs/tbench-par<w>.log` for outage signatures; sweep-status.sh and
+# tick.sh read the same two paths. Every one of them was silently inert against
+# a two-worker sweep -- "no live workers, standing down" on a sweep that was
+# running, and "no worker logs found" on a sweep that was logging to a console.
+# The lock holds $BASHPID (this subshell's MSYS pid) because that is the pid
+# `ps -W`'s first column shows, which is what both readers compare against.
+run_worker() {
+  local port="$1" prefix="$2" w="$3"; shift 3
+  local log="$LOGS/tbench-par${w}.log"
+  local lock="$REPO/mcp-data/.tb-par${w}.lock"
+  local rc
+  printf '%s\n' "$BASHPID" > "$lock"
+  # PIPESTATUS, not $?: `| tee` would otherwise report tee's success as the
+  # worker's verdict and every halt would read as a clean finish.
+  _worker_body "$port" "$prefix" "$w" "$@" 2>&1 | tee -a "$log"
+  rc="${PIPESTATUS[0]}"
+  rm -f "$lock"
+  printf '%s\n' "$rc" > "$JOBS_ROOT/$prefix.rc"
+  return "$rc"
+}
+
+# ── KILLING THE SIBLING, WITH ITS CONTAINERS ─────────────────────────────────
+#
+# ⛔ A HALT THAT STOPS ONE WORKER IS HALF A HALT. The quota branch stops the
+# worker that hit the wall; the SIBLING keeps taking tasks into the same spent
+# session, and every one of them lands as a zero-token failure at a rate of one
+# per ~15 minutes until its own list runs out.
+#
+# Windows cannot deliver a real SIGTERM, so `docker compose down` will not run
+# by itself the way a POSIX teardown would: harbor's own reaper
+# (TBENCH-TEARDOWN-REAP-1 in terransoul_hook.py) only fires when ITS teardown
+# command fails, not when the process is killed out from under it. So teardown
+# here is EXPLICIT: taskkill the tree (politely first, then forced), then remove
+# the trial containers directly.
+#
+# ⛔ THE `__` IS THE SAFETY PROPERTY. Every harbor trial container carries the
+# trial session id, which always contains a DOUBLE underscore; none of the
+# owner's own long-lived containers (`tl-mariadb-test`,
+# `richardle-mariadb-local`, `shopee-crawler-mariadb-local`) do. A blunt sweep
+# by status killed two LIVE trials on 2026-09-07 and would delete the owner's
+# data here.
+_kill_worker_tree() { # <msys pid> <label>
+  local pid="$1" label="$2" win i
+  [ -n "$pid" ] || return 0
+  _msys_pid_alive "$pid" || return 0
+  win="$(_msys_to_winpid "$pid")"
+  echo "[sweep] stopping $label (msys pid $pid, winpid ${win:-unknown})"
+  if [ -n "$win" ] && command -v taskkill >/dev/null 2>&1; then
+    taskkill //PID "$win" //T >/dev/null 2>&1 || true
+    # A SHORT grace, deliberately. A polite taskkill posts WM_CLOSE, which a
+    # windowless bash/python tree ignores, so waiting long for a cooperative
+    # exit buys nothing and costs the sibling another minute of burning tasks
+    # into the wall that caused the halt. The explicit container reap below is
+    # what actually guarantees teardown here, not the grace period.
+    for i in $(seq 1 "${TB_SIBLING_GRACE_S:-8}"); do
+      _msys_pid_alive "$pid" || break
+      sleep 1
+    done
+    _msys_pid_alive "$pid" && taskkill //PID "$win" //T //F >/dev/null 2>&1 || true
+  fi
+  kill -9 "$pid" 2>/dev/null || true
+  return 0
+}
+
+_reap_sweep_containers() {
+  command -v docker >/dev/null 2>&1 || return 0
+  local dead
+  dead="$(docker ps -a --format '{{.ID}} {{.Names}}' 2>/dev/null | grep '__' || true)"
+  [ -n "$dead" ] || { echo "[sweep] no trial containers left to reap"; return 0; }
+  echo "[sweep] reaping $(printf '%s\n' "$dead" | wc -l | tr -d ' ') trial container(s):"
+  printf '%s\n' "$dead" | sed 's/^/[sweep]   /'
+  # shellcheck disable=SC2046
+  docker rm -f $(printf '%s\n' "$dead" | awk '{print $1}') >/dev/null 2>&1 || true
+  return 0
+}
+
+# Both workers' unfinished tasks, in the ORIGINAL list order, so the resume
+# command is a drop-in for the original launch.
+_merge_remaining() {
+  local out="$JOBS_ROOT/ts${STAMP}.remaining" t
+  local left=()
+  for t in "${ALL_TASKS[@]}"; do
+    if grep -qxF "$t" "$JOBS_ROOT/$P0.remaining" 2>/dev/null \
+    || grep -qxF "$t" "$JOBS_ROOT/$P1.remaining" 2>/dev/null; then
+      left+=("$t")
+    fi
+  done
+  if [ "${#left[@]}" -gt 0 ]; then printf '%s\n' "${left[@]}" > "$out"; else : > "$out"; fi
+  printf '%s' "$out"
+}
+
+rm -f "$JOBS_ROOT/$P0.rc" "$JOBS_ROOT/$P1.rc"
+run_worker 7425 "$P0" 0 "${W0[@]}" &
 PID0=$!
-run_worker 7426 "ts${STAMP}w1" "${W1[@]}" &
+run_worker 7426 "$P1" 1 "${W1[@]}" &
 PID1=$!
 
-wait "$PID0" "$PID1"
-echo "[2w] both workers finished — merge with: bash merge-sweep.sh jobs ts${STAMP}w0 && bash merge-sweep.sh jobs ts${STAMP}w1"
+# ⛔ NOT `wait "$PID0" "$PID1"`. That waits for BOTH and discards both exit
+# codes, so a worker that halted on a spent session was indistinguishable from
+# one that finished its list -- and the next line printed "both workers
+# finished" either way, which is how an outage gets reported as a completed
+# sweep. bash 4.4 has no `wait -n -p`, so the workers publish their verdict as
+# files and this polls them.
+HALT_KIND=""
+HALT_DETAIL=""
+while :; do
+  if [ -f "$HALT_FILE" ]; then
+    HALT_KIND="$(cut -d'|' -f1 < "$HALT_FILE")"
+    HALT_DETAIL="$(cut -d'|' -f2- < "$HALT_FILE")"
+    break
+  fi
+  [ -f "$JOBS_ROOT/$P0.rc" ] && [ -f "$JOBS_ROOT/$P1.rc" ] && break
+  # A worker killed hard (closed console, SIGKILL, the watchdog) writes neither
+  # a halt file nor an .rc. Waiting on a file that will never appear is how a
+  # supervisor hangs for the rest of the night, so liveness is the backstop.
+  if ! _msys_pid_alive "$PID0" && ! _msys_pid_alive "$PID1"; then
+    echo "[sweep] both worker processes are gone; stopping the wait." >&2
+    break
+  fi
+  sleep "${TB_SWEEP_POLL_S:-2}"
+done
+
+if [ -n "$HALT_KIND" ]; then
+  echo "[sweep] HALT signalled: $HALT_KIND — $HALT_DETAIL" >&2
+  _kill_worker_tree "$PID0" "worker 0"
+  _kill_worker_tree "$PID1" "worker 1"
+  _reap_sweep_containers
+  rm -f "$REPO/mcp-data/.tb-par0.lock" "$REPO/mcp-data/.tb-par1.lock"
+fi
+
+wait "$PID0" 2>/dev/null || true
+wait "$PID1" 2>/dev/null || true
+
+RC0="$(cat "$JOBS_ROOT/$P0.rc" 2>/dev/null | tr -d '[:space:]')"
+RC1="$(cat "$JOBS_ROOT/$P1.rc" 2>/dev/null | tr -d '[:space:]')"
+
+if [ -n "$HALT_KIND" ]; then
+  REMAIN="$(_merge_remaining)"
+  n="$(grep -c . "$REMAIN" 2>/dev/null)"; n="${n:-0}"
+  echo "[sweep] HALTED: $HALT_KIND — resume with: bash run-two-workers.sh $REMAIN" >&2
+  echo "[sweep] $n task(s) stayed UNMEASURED; nothing already scored was dropped." >&2
+  echo "[sweep] partial results still merge: bash merge-sweep.sh $JOBS_ROOT $P0 && bash merge-sweep.sh $JOBS_ROOT $P1" >&2
+  case "$HALT_KIND" in preflight) exit 4 ;; *) exit 3 ;; esac
+fi
+
+if [ "${RC0:-1}" != "0" ] || [ "${RC1:-1}" != "0" ]; then
+  REMAIN="$(_merge_remaining)"
+  echo "[sweep] a worker exited non-zero (w0=$RC0 w1=$RC1) — resume with: bash run-two-workers.sh $REMAIN" >&2
+  exit 3
+fi
+
+echo "[2w] both workers finished — merge with: bash merge-sweep.sh jobs $P0 && bash merge-sweep.sh jobs $P1"

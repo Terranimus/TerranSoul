@@ -1674,7 +1674,20 @@ class TerranSoulHook(ClaudeCode):
             return
         try:
             cache.parent.mkdir(parents=True, exist_ok=True)
-            staging = cache.with_name(cache.name + ".partial")
+            # ⛔ THE STAGING PATH MUST BE PER-PROCESS. It was a single shared
+            # `<cache>.partial`, and the comment 30 lines below states the
+            # condition that makes that unsafe: "the two workers install at the
+            # same time by construction". Both compute the same staging path, so
+            # worker B's `rmtree` on entry deletes the tree worker A is midway
+            # through downloading (a ~297 MB `download_dir`), and A then either
+            # publishes a truncated cache by rename or fails the `bin/claude`
+            # check and discards a capture that was fine.
+            #
+            # The pid suffix makes the two disjoint. Publication is still by
+            # rename, so whichever finishes first wins and the loser's rename
+            # fails harmlessly onto an existing directory -- the behaviour the
+            # OSError branch below already handles.
+            staging = cache.with_name(f"{cache.name}.partial.{os.getpid()}")
             if staging.exists():
                 shutil.rmtree(staging, ignore_errors=True)
             # `docker compose cp <svc>:<src>/. <dst>` requires <dst> to EXIST;

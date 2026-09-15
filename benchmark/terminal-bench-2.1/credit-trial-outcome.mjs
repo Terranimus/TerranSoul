@@ -90,7 +90,7 @@ import { readFileSync, existsSync, readdirSync, statSync } from 'node:fs'
 import { join, dirname } from 'node:path'
 import { idsForTrial } from './attribute-proxy-lines.mjs'
 import { runWasSound } from './trial-outcome.mjs'
-import { runRefutationWatch } from './refutation-watch.mjs'
+import { runRefutationWatch, transportFor } from './refutation-watch.mjs'
 import { EXPOSED_WHILE_REFUTED, seededRefutationThreshold } from './recount-outcomes.mjs'
 
 /** The graded reward, or null when the trial produced none. */
@@ -664,22 +664,19 @@ async function main() {
   }
   // One transport for every call, so no half of this script can drift into its
   // own slightly-different request shape.
-  let rpcId = 0
-  const callTool =
-    url && token
-      ? async (params) => {
-          const r = await fetch(url, {
-            method: 'POST',
-            headers: {
-              'content-type': 'application/json',
-              accept: 'application/json, text/event-stream',
-              authorization: `Bearer ${token}`,
-            },
-            body: JSON.stringify({ jsonrpc: '2.0', id: ++rpcId, method: 'tools/call', params }),
-          })
-          return { res: r, text: await r.text() }
-        }
-      : null
+  // ⛔ ONE TRANSPORT, AND IT IS THE ONE refutation-watch.mjs ALREADY EXPORTS.
+  // This used to be a second inline `fetch` with the same headers and the same
+  // JSON-RPC envelope — the drift the surrounding comment warns about, and it
+  // drifted in the one dimension that matters for an unattended sweep: it had
+  // NO TIMEOUT. undici's default headers timeout is 300 s, this runs at the END
+  // of every trial, several calls deep, against a brain the trial may have just
+  // outlived (the MCP idle watchdog has shut the brain down mid-trial before —
+  // measured 2026-09-01, filter-js-from-html, where the Stop hook's own request
+  // came back "upstream unreachable"). A brain that stalls rather than refuses
+  // would add minutes of dead wait to each of 89 trials. The shared transport
+  // bounds it and treats a timeout as non-fatal: the trial's result.json is
+  // already written, so the cost is one credit call, not the run.
+  const callTool = url && token ? transportFor(url, token, { label: 'credit' }) : null
 
   const exposure = await classifyExposedWhileRefuted({
     readIds,

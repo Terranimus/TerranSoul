@@ -813,20 +813,40 @@ export function buildRecountAcrossTasks(memoryId, usedRows, alarm) {
   return buildRecount(memoryId, counts, source)
 }
 
-/** The transport `credit-trial-outcome.mjs` opens, as a callable. */
-export function transportFor(url, token) {
+/** The transport `credit-trial-outcome.mjs` opens, as a callable.
+ *
+ * ⛔ BOUNDED, BECAUSE THE DEFAULT IS FIVE MINUTES PER CALL. undici's headers
+ * timeout is 300 s, and the watch runs at the END of every trial against a
+ * brain the trial may have just outlived — the MCP idle watchdog has shut the
+ * brain down mid-trial before (measured 2026-09-01, filter-js-from-html). A
+ * brain that stops answering rather than refusing would add minutes of dead
+ * wait to every remaining trial of an unattended sweep. A timeout here is
+ * non-fatal by design: the trial's result.json is already written, so the watch
+ * loses one recount rather than the run.
+ */
+export function transportFor(url, token, opts = {}) {
+  const timeoutMs = opts.timeoutMs ?? (Number(process.env.TB_MCP_HTTP_TIMEOUT_MS) || 60_000)
+  const label = opts.label ?? 'refute-watch'
+  const doFetch = opts.fetchImpl ?? fetch
   let rpcId = 0
   return async (params) => {
-    const r = await fetch(url, {
-      method: 'POST',
-      headers: {
-        'content-type': 'application/json',
-        accept: 'application/json, text/event-stream',
-        authorization: `Bearer ${token}`,
-      },
-      body: JSON.stringify({ jsonrpc: '2.0', id: ++rpcId, method: 'tools/call', params }),
-    })
-    return { res: r, text: await r.text() }
+    try {
+      const r = await doFetch(url, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          accept: 'application/json, text/event-stream',
+          authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ jsonrpc: '2.0', id: ++rpcId, method: 'tools/call', params }),
+        signal: AbortSignal.timeout(timeoutMs),
+      })
+      return { res: r, text: await r.text() }
+    } catch (e) {
+      const why = e?.name === 'TimeoutError' ? `timed out after ${timeoutMs}ms` : String(e?.message ?? e)
+      console.error(`[${label}] MCP call ${params?.name ?? '?'} ${why} — skipping it, not failing the trial`)
+      return { res: { ok: false, status: 0 }, text: `{"error":{"message":"${why}"}}` }
+    }
   }
 }
 

@@ -85,6 +85,18 @@ EOF
 
 # Run ONLY the preflight block, extracted from run-dg.sh by its own markers, so
 # the test exercises the shipped text rather than a copy that could drift.
+# A fake df whose Available column is whatever FAKE_AVAIL_KB says. Free disk is
+# the one headroom figure that must REFUSE rather than remediate, so the block's
+# exit code is now part of what these cases assert.
+cat > "$SANDBOX/bin/df" <<'EOF'
+#!/usr/bin/env bash
+echo "Filesystem 1K-blocks Used Available Use% Mounted"
+echo "D: 1953512444 1596111416 ${FAKE_AVAIL_KB:-357401028} 82% /d"
+exit 0
+EOF
+chmod +x "$SANDBOX/bin/df"
+
+BLOCK_RC=0
 run_block() {
   : > "$ACTIONS"
   local script="$SANDBOX/block.sh"
@@ -92,8 +104,9 @@ run_block() {
   if ! grep -q "TBENCH-HOST-HEADROOM-1" "$script"; then
     return 9
   fi
-  ACTIONS_LOG="$ACTIONS" PATH="$SANDBOX/bin:$PATH" TB_SKIP_HEADROOM=0 \
-    bash "$script" > "$SANDBOX/out.txt" 2>&1
+  ACTIONS_LOG="$ACTIONS" PATH="$SANDBOX/bin:$PATH" TB_SKIP_HEADROOM=0 REPO="$SANDBOX" \
+    env "$@" bash "$script" > "$SANDBOX/out.txt" 2>&1
+  BLOCK_RC=$?
   return 0
 }
 
@@ -150,15 +163,76 @@ else
   no "removed_names_are_printed" "removal was silent"
 fi
 
-# ── 7. opt-out is honoured ───────────────────────────────────────────────────
+# ── 7. FREE DISK, which must REFUSE rather than remediate ────────────────────
+#
+# ⛔ FAILS ON THE PRE-CHANGE TREE: the headroom preflight checked VRAM and
+# leaked containers and nothing else, so a repo drive with a couple of GB left
+# started a 20-40 h sweep that could not possibly finish it. Unlike an expired
+# Ollama model there is nothing to remediate: harbor pulls images, docker writes
+# layers and every trial writes job artefacts onto the same drive, and there is
+# no safe automatic action that frees space on the owner's disk. It is also the
+# rare headroom figure that is DETERMINISTIC rather than a judgement call — the
+# same reason the TLS preflight above refuses — so it refuses, like that one,
+# instead of reporting like the rest of this block.
+make_curl '{"models":[]}'
+run_block FAKE_AVAIL_KB=1048576   # exactly 1 GB
+if [ "$BLOCK_RC" -ne 0 ] && grep -q 'REFUSING' "$SANDBOX/out.txt"; then
+  ok "under_the_floor_refuses"
+else
+  no "under_the_floor_refuses" "rc=$BLOCK_RC :: $(cat "$SANDBOX/out.txt")"
+fi
+if grep -qE '1 GB free' "$SANDBOX/out.txt"; then
+  ok "the_refusal_names_the_figure"
+else
+  no "the_refusal_names_the_figure" "$(cat "$SANDBOX/out.txt")"
+fi
+
+run_block FAKE_AVAIL_KB=104857600  # 100 GB
+if [ "$BLOCK_RC" -eq 0 ] && grep -q '100 GB free' "$SANDBOX/out.txt"; then
+  ok "ample_space_passes_and_is_reported"
+else
+  no "ample_space_passes_and_is_reported" "rc=$BLOCK_RC :: $(cat "$SANDBOX/out.txt")"
+fi
+
+# FAILS OPEN when it cannot measure. "A preflight that blocks because it could
+# not check is worse than no preflight" is this block's own rule.
+cat > "$SANDBOX/bin/df" <<'EOF'
+#!/usr/bin/env bash
+echo "df: nonsense"
+exit 1
+EOF
+chmod +x "$SANDBOX/bin/df"
+run_block
+if [ "$BLOCK_RC" -eq 0 ]; then
+  ok "an_unreadable_df_fails_open"
+else
+  no "an_unreadable_df_fails_open" "rc=$BLOCK_RC :: $(cat "$SANDBOX/out.txt")"
+fi
+cat > "$SANDBOX/bin/df" <<'EOF'
+#!/usr/bin/env bash
+echo "Filesystem 1K-blocks Used Available Use% Mounted"
+echo "D: 1953512444 1596111416 ${FAKE_AVAIL_KB:-357401028} 82% /d"
+exit 0
+EOF
+chmod +x "$SANDBOX/bin/df"
+
+# ── 8. opt-out is honoured ───────────────────────────────────────────────────
 : > "$ACTIONS"
 awk '/TBENCH-HOST-HEADROOM-1/{on=1} on{print} on&&/^fi$/{exit}' "$HERE/run-dg.sh" > "$SANDBOX/block.sh"
-ACTIONS_LOG="$ACTIONS" PATH="$SANDBOX/bin:$PATH" TB_SKIP_HEADROOM=1 \
+ACTIONS_LOG="$ACTIONS" PATH="$SANDBOX/bin:$PATH" TB_SKIP_HEADROOM=1 FAKE_AVAIL_KB=1048576 \
   bash "$SANDBOX/block.sh" >/dev/null 2>&1
+skip_rc=$?
 if [ -s "$ACTIONS" ]; then
   no "skip_flag_disables_everything" "acted despite TB_SKIP_HEADROOM=1"
 else
   ok "skip_flag_disables_everything"
+fi
+# Including the refusal: an explicit opt-out must not be overridden by the one
+# check in this block that can stop a run.
+if [ "$skip_rc" -eq 0 ]; then
+  ok "skip_flag_also_disables_the_disk_refusal"
+else
+  no "skip_flag_also_disables_the_disk_refusal" "exit $skip_rc despite TB_SKIP_HEADROOM=1"
 fi
 
 echo
