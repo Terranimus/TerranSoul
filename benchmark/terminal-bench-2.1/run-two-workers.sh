@@ -570,6 +570,38 @@ sys.exit(1)
 " "$job_dir" 2>/dev/null
 }
 
+# ── BRAIN NEVER CONNECTED (fix F4, TBENCH-BRAIN-CONNECT-1) ──────────────────
+#
+# The sibling of job_was_killed_with_work, for a different non-capability
+# shape: forensics over the 2026-09 corpus found 22 trials corpus-wide that
+# started with the in-container MCP connection NEVER established at all
+# (ConnectionRefused at Claude Code's own init, which it never retries).
+# Counting those as graded capability failures charges the agent for a tool
+# it never actually had access to -- the exact mistake job_was_infra_failure
+# already refuses to make for a run that never happened at all.
+#
+# Delegates the decision to brain-connectivity.mjs (fix F5), which reads the
+# proxy's own per-trial evidence (terransoul-proxy-calls.jsonl /
+# terransoul-proxy-status.jsonl) rather than reasoning about it here a second
+# time -- ONE place decides "never connected", the same discipline
+# trial-outcome.mjs already keeps for "what was this trial's outcome".
+#
+# Unlike job_was_killed_with_work, there is no result.json fallback on a
+# script error: this check is pure synchronous file reads with no MCP call
+# and no python runtime dependency to flake, so a non-zero exit here is read
+# simply as "not this shape" (fail-safe: nothing is requeued on an error it
+# cannot explain, which leaves the trial for the existing outage/halt checks
+# below to judge on its own graded result).
+job_was_brain_never_connected() { # <job_dir> -> trial\tstatus\treason on stdout
+  local job_dir="$1" helper out rc
+  [ -n "$job_dir" ] && [ -d "$job_dir" ] || return 1
+  helper="${BRAIN_CONNECTIVITY_CHECK:-$HERE/brain-connectivity.mjs}"
+  out="$(node "$helper" never-connected-and-not-passed "$job_dir" 2>/dev/null)"
+  rc=$?
+  [ "$rc" -eq 0 ] && [ -n "$out" ] || return 1
+  printf '%s\n' "$out"
+}
+
 # ── THE ONE-REQUEUE MARKER, WHICH MUST OUTLIVE A RELAUNCH ────────────────────
 # A killed task is requeued ONCE. The marker is a ledger on disk, not a shell
 # variable, because sweep-until-done.sh relaunches this script after every wall
@@ -831,6 +863,22 @@ _worker_body() {
       # the worker. Its exit code is advisory here; run-dg's own cold-brain
       # gate is what decides whether the trial may start.
       bash "$BENCH_BRAIN_START" --per-task "$t" >/dev/null 2>&1         || echo "[2w:$prefix] bench brain not restartable before $t (start-bench-brain.sh failed); run-dg's gate decides" >&2
+      # ⛔ ORPHAN RECLAIM WAS ONLY EVER DONE ONCE, AT SWEEP LAUNCH
+      # (TBENCH-BRAIN-CONNECT-1 / fix F3). A proxy that crashes UNCLEANLY
+      # mid-sweep -- the EADDRINUSE self-check mcp-auth-proxy.mjs now has
+      # (fix F2), a hard kill, a closed console -- can leave an MSYS-style
+      # orphan still holding THIS worker's own port between one task and the
+      # next, and reclaim_port at launch cannot see that: it has not happened
+      # yet. Calling it again here, before every task, is safe and cheap: it
+      # is idempotent (a port this worker already owns costs one
+      # is-it-listening check, see reclaim_port's "port free -> claim it"
+      # case) and it still refuses rather than kill a LIVE sibling's proxy --
+      # the same distinction the launch-time call already makes.
+      reclaim_port "$port" || {
+        echo "[2w:$prefix] HALT: cannot reclaim :$port before $t -- see the refusal above." >&2
+        _signal_halt "port-reclaim" "worker $w: could not reclaim :$port before $t"
+        return 4
+      }
       # ONE TASK PER JOB. This is the whole point: one job = one proxy = one log
       # = one TRIAL_SCOPE = one trial.
       #
@@ -960,6 +1008,41 @@ _worker_body() {
           printf '%s\t%s\t%s\t%s\n' "$t" "$killed_trial" "$(basename "$job_dir")" "$killed_evidence" \
             >> "$JOBS_ROOT/$prefix.requeued"
           echo "[sweep] REQUEUED worker $w: $t (killed trial $killed_trial, exit 137, no quota evidence) — k=2 for this task"
+          queue+=("$t")
+          keep=()
+          for x in ${unrun[@]+"${unrun[@]}"}; do [ "$x" = "$t" ] || keep+=("$x"); done
+          unrun=(${keep[@]+"${keep[@]}"} "$t")
+          _write_remaining "$remaining" ${unrun[@]+"${unrun[@]}"}
+          break
+        fi
+      fi
+      # ── BRAIN NEVER CONNECTED, NOT A CAPABILITY RESULT (fix F4) ────────────
+      #
+      # Same convention as the killed-with-work case just above, and it
+      # shares the SAME one-requeue ledger and gate: one non-capability retry
+      # per task, whichever reason earns it. Skipped when the killed-with-work
+      # branch above already claimed this attempt (its own `break` already
+      # moved on; this guard only matters for its "already requeued, falls
+      # through" sub-case, so the two reasons are never reported twice for one
+      # attempt).
+      local never_conn_info="" never_conn_trial="" never_conn_evidence=""
+      if [ -z "$killed_info" ] && never_conn_info="$(job_was_brain_never_connected "$job_dir")"; then
+        never_conn_trial="${never_conn_info%%$'\t'*}"
+        never_conn_evidence="${never_conn_info#*$'\t'}"
+        if _task_was_requeued "$prefix" "$t"; then
+          echo "[2w:$prefix] BRAIN NEVER CONNECTED AGAIN on $t — trial $never_conn_trial ($never_conn_evidence)." >&2
+          echo "[2w:$prefix] It already had its ONE requeue, so it is not requeued again; the existing" >&2
+          echo "[2w:$prefix] outage/halt checks decide what this trial is." >&2
+          echo "[sweep] BRAIN NEVER CONNECTED AGAIN worker $w: $t (trial $never_conn_trial) — already requeued once, not again"
+        else
+          echo "[2w:$prefix] BRAIN NEVER CONNECTED on $t — trial $never_conn_trial ($never_conn_evidence)." >&2
+          echo "[2w:$prefix] The container's MCP connection to the proxy never established at all (the" >&2
+          echo "[2w:$prefix] 22-trial corpus shape), so this is not a capability result. NOT halting and" >&2
+          echo "[2w:$prefix] NOT marking it done: requeued ONCE at the end of this worker's list. The" >&2
+          echo "[2w:$prefix] unconnected trial still scores 0 (k=2)." >&2
+          printf '%s\t%s\t%s\t%s\n' "$t" "$never_conn_trial" "$(basename "$job_dir")" "$never_conn_evidence" \
+            >> "$JOBS_ROOT/$prefix.requeued"
+          echo "[sweep] REQUEUED worker $w: $t (trial $never_conn_trial, brain never connected) — k=2 for this task"
           queue+=("$t")
           keep=()
           for x in ${unrun[@]+"${unrun[@]}"}; do [ "$x" = "$t" ] || keep+=("$x"); done
@@ -1168,7 +1251,7 @@ _disclose_requeues() {
   local p
   for p in "$P0" "$P1"; do
     [ -s "$JOBS_ROOT/$p.requeued" ] || continue
-    echo "[2w] k=2 DISCLOSURE ($p): $(cut -f1 "$JOBS_ROOT/$p.requeued" | tr '\n' ' ')— requeued once after an exit-137 kill with no quota evidence; ledger $JOBS_ROOT/$p.requeued, listed by merge-sweep.sh"
+    echo "[2w] k=2 DISCLOSURE ($p): $(cut -f1 "$JOBS_ROOT/$p.requeued" | tr '\n' ' ')— each requeued ONCE for a non-capability reason (an exit-137 kill with no quota evidence, or the brain never connecting at all); per-task reason in ledger $JOBS_ROOT/$p.requeued, listed by merge-sweep.sh"
   done
   return 0
 }

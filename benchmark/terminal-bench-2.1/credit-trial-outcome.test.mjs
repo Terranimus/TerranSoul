@@ -39,9 +39,10 @@ test('the observation carries every param the tool REQUIRES', () => {
   // answered `missing required param: session_id`, so nothing landed. The
   // attribution was correct and still wrote nothing.
   //
-  // `brain_observe_outcome`'s schema requires session_id, context, action and
-  // response (tools.rs). Asserted by NAME here so a future field addition to
-  // that schema breaks this test rather than a live run.
+  // `brain_credit_outcome`'s schema requires session_id, context, action and
+  // response (tools.rs), exactly like its sibling `brain_observe_outcome`.
+  // Asserted by NAME here so a future field addition to that schema breaks
+  // this test rather than a live run.
   //
   // FAILS ON THE PRE-CHANGE TREE: the object had only outcome/used_memory_ids/note.
   const args = buildObservation(0, [1], 'filter-js-from-html__abc').arguments
@@ -70,7 +71,7 @@ test('a FAILED trial teaches its sources that they failed', () => {
   // The whole point: 0.0 must produce a failure attribution. Before this, a
   // graded 0 wrote nothing anywhere and the promotion survived untouched.
   const obs = buildObservation(0, [26531, 26628])
-  assert.equal(obs.name, 'brain_observe_outcome')
+  assert.equal(obs.name, 'brain_credit_outcome')
   assert.equal(obs.arguments.outcome, 'failure')
   assert.deepEqual(obs.arguments.used_memory_ids, [26531, 26628])
   assert.match(
@@ -78,6 +79,17 @@ test('a FAILED trial teaches its sources that they failed', () => {
     /graded by the task verifier/,
     'the row must record that the verdict came from the GRADER, since that is the ' +
       'entire difference from the signal the agent already writes',
+  )
+  // ⛔ FAILS ON THE PRE-CHANGE TREE: this called `brain_observe_outcome` with an
+  // explicit `verdict_source: 'grader'` — a plain string argument the caller
+  // supplied. OUTCOME-INTEGRITY-3 made "the caller is a grader" structural
+  // instead of a caller-suppliable claim: `brain_credit_outcome` is the
+  // harness-only sibling (off `tools/list`), and reaching it AT ALL is the
+  // provenance proof, so it carries no `verdict_source` argument at all.
+  assert.equal(
+    obs.arguments.verdict_source,
+    undefined,
+    'brain_credit_outcome has no verdict_source argument — its own identity is the proof',
   )
 })
 
@@ -433,7 +445,7 @@ test('END TO END: only the memories the trial AUTHORED are stamped, over its own
       const params = JSON.parse(body).params
       calls.push(params)
       const inner =
-        params.name === 'brain_observe_outcome'
+        params.name === 'brain_credit_outcome'
           ? { memories_credited: params.arguments.used_memory_ids }
           : { memory_id: params.arguments.id, blocks_stamped: 1, head_stamped: false, changed: true }
       res.writeHead(200, { 'content-type': 'application/json' })
@@ -462,7 +474,7 @@ test('END TO END: only the memories the trial AUTHORED are stamped, over its own
     await new Promise((resolve) => server.close(resolve))
   }
 
-  const observeCalls = calls.filter((c) => c.name === 'brain_observe_outcome')
+  const observeCalls = calls.filter((c) => c.name === 'brain_credit_outcome')
   const stampCalls = calls.filter((c) => c.name === 'brain_stamp_outcome')
 
   assert.equal(stampCalls.length, 1, 'exactly the one memory this trial authored')
@@ -628,7 +640,7 @@ test('END TO END: only the memories the trial USED are credited, and the rest ar
       const params = JSON.parse(body).params
       calls.push(params)
       const inner =
-        params.name === 'brain_observe_outcome'
+        params.name === 'brain_credit_outcome'
           ? { memories_credited: params.arguments.used_memory_ids }
           : { memory_id: params.arguments.id, blocks_stamped: 1, head_stamped: false, changed: true }
       res.writeHead(200, { 'content-type': 'application/json' })
@@ -659,7 +671,7 @@ test('END TO END: only the memories the trial USED are credited, and the rest ar
     await new Promise((resolve) => server.close(resolve))
   }
 
-  const observe = calls.filter((c) => c.name === 'brain_observe_outcome')
+  const observe = calls.filter((c) => c.name === 'brain_credit_outcome')
   assert.equal(observe.length, 1)
   assert.deepEqual(
     observe[0].arguments.used_memory_ids,
@@ -888,7 +900,7 @@ test('END TO END: a reward=1 read-while-refuted id logs exposed-while-refuted an
       const params = JSON.parse(body).params
       calls.push(params)
       const inner =
-        params.name === 'brain_observe_outcome'
+        params.name === 'brain_credit_outcome'
           ? { memories_credited: params.arguments.used_memory_ids }
           : { memory_id: params.arguments.id, blocks_stamped: 1, head_stamped: false, changed: true }
       res.writeHead(200, { 'content-type': 'application/json' })
@@ -919,7 +931,7 @@ test('END TO END: a reward=1 read-while-refuted id logs exposed-while-refuted an
     await new Promise((resolve) => server.close(resolve))
   }
 
-  const observe = calls.filter((c) => c.name === 'brain_observe_outcome')
+  const observe = calls.filter((c) => c.name === 'brain_credit_outcome')
   assert.equal(observe.length, 1)
   assert.deepEqual(
     observe[0].arguments.used_memory_ids,
@@ -1004,7 +1016,7 @@ test('END TO END: a LEGACY read row is classified from the ledger, and still not
                 },
               }
             : { id: 26999, content: 'an ordinary entry' }
-      } else if (params.name === 'brain_observe_outcome') {
+      } else if (params.name === 'brain_credit_outcome') {
         inner = { memories_credited: params.arguments.used_memory_ids }
       } else {
         inner = { memory_id: params.arguments.id, blocks_stamped: 1, changed: true }
@@ -1039,7 +1051,7 @@ test('END TO END: a LEGACY read row is classified from the ledger, and still not
 
   const fetched = calls.filter((c) => c.name === 'brain_get_entry').map((c) => c.arguments.id)
   assert.deepEqual(fetched.sort((a, b) => a - b), [26809, 26999], 'both legacy reads are checked')
-  const observe = calls.filter((c) => c.name === 'brain_observe_outcome')
+  const observe = calls.filter((c) => c.name === 'brain_credit_outcome')
   assert.equal(observe.length, 1)
   assert.deepEqual(
     observe[0].arguments.used_memory_ids,

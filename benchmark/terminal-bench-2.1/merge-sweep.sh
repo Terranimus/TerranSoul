@@ -142,10 +142,27 @@ if [ -f "$LAUNCH" ]; then
     if [ "$ID_AGENT_ALT" != "$ID_AGENT" ]; then
       IDENTITY_PREFIX_ALT="${ID_AGENT_ALT}__${ID_MODEL}__"
     fi
+    # ⛔ A THIRD FORM, FOR THE SAME REASON AS THE OTHER TWO: 2026-09-16 renamed
+    # TerranSoulHook.name() (terransoul_hook.py) from "terransoul-hook" to
+    # "TerranSoul" for the leaderboard submission identity. harbor writes that
+    # return value VERBATIM, zero normalisation, into the real eval key --
+    # neither the colon-stripped TB_AGENT segment ("terransoul_hook") nor its
+    # underscore->hyphen form ("terransoul-hook") derives "TerranSoul" by any
+    # string transform, so without this arm every trial from a sweep run under
+    # the renamed identity would silently report "0 of 0 trials" / "ACCURACY
+    # 0.00%" here -- the identical failure class already measured twice
+    # (2026-08-12, 2026-09-01) for exactly this reason. Only added when
+    # ID_AGENT resolves to the hook identity's module, so an unrelated cohort
+    # (a different TB_AGENT entirely) never picks up this prefix by accident.
+    if [ "$ID_AGENT" = "terransoul_hook" ]; then
+      IDENTITY_PREFIX_ALT2="TerranSoul__${ID_MODEL}__"
+    fi
   fi
 fi
 if [ -n "$IDENTITY_PREFIX" ]; then
-  if [ -n "${IDENTITY_PREFIX_ALT:-}" ]; then
+  if [ -n "${IDENTITY_PREFIX_ALT2:-}" ]; then
+    echo "  identity filter    : $IDENTITY_PREFIX* or $IDENTITY_PREFIX_ALT* or $IDENTITY_PREFIX_ALT2*  (from $LAUNCH; TB_IDENTITY_FILTER=0 to disable)"
+  elif [ -n "${IDENTITY_PREFIX_ALT:-}" ]; then
     echo "  identity filter    : $IDENTITY_PREFIX* or $IDENTITY_PREFIX_ALT*  (from $LAUNCH; TB_IDENTITY_FILTER=0 to disable)"
   else
     echo "  identity filter    : $IDENTITY_PREFIX*  (from $LAUNCH; TB_IDENTITY_FILTER=0 to disable)"
@@ -159,6 +176,7 @@ QUARANTINE_FILE="$QUARANTINE_FILE" \
 IDENTITY_FILTER_ENABLED="${TB_IDENTITY_FILTER:-1}" \
 IDENTITY_PREFIX="$IDENTITY_PREFIX" \
 IDENTITY_PREFIX_ALT="${IDENTITY_PREFIX_ALT:-}" \
+IDENTITY_PREFIX_ALT2="${IDENTITY_PREFIX_ALT2:-}" \
 python - "$JOBS" "${PREFIXES[@]}" <<'PY'
 import json, os, sys, glob
 from collections import defaultdict
@@ -176,7 +194,17 @@ identity_prefix = os.environ.get("IDENTITY_PREFIX", "")
 # cohort silently — measured 2026-09-01: 100% excluded, reported as
 # "0 of 0 trials" and "ACCURACY 0.00%", which reads like an empty corpus.
 identity_prefixes = tuple(
-    p for p in (identity_prefix, os.environ.get("IDENTITY_PREFIX_ALT", "")) if p
+    p
+    for p in (
+        identity_prefix,
+        os.environ.get("IDENTITY_PREFIX_ALT", ""),
+        # 2026-09-16: TerranSoulHook.name() renamed "terransoul-hook" -> "TerranSoul".
+        # harbor writes .name()'s return verbatim into the real eval key, which
+        # neither of the two TB_AGENT-derived forms above can produce by any
+        # string transform -- see the shell-side comment at IDENTITY_PREFIX_ALT2.
+        os.environ.get("IDENTITY_PREFIX_ALT2", ""),
+    )
+    if p
 )
 
 # ── COST FALLBACK: RECONSTRUCT FROM RAW TOKEN USAGE, closed 2026-08-18 ──────

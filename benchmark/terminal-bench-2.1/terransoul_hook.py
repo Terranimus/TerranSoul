@@ -1332,7 +1332,21 @@ class TerranSoulHook(ClaudeCode):
     @staticmethod
     @override
     def name() -> str:
-        return "terransoul-hook"
+        # OWNER DECISION 2026-09-16: the public/submittable identity is the
+        # bare product name "TerranSoul", capitalised exactly, no "-hook"
+        # suffix -- harbor writes this string VERBATIM (zero normalisation)
+        # into every trial's result.json agent_info.name, into the Supabase
+        # agent.name column on upload, and into the <agent>__<model>__<dataset>
+        # eval-key harbor computes for aggregation. It is baked in at TRIAL RUN
+        # TIME, not something a later script can safely rewrite post-hoc without
+        # risking the leaderboard's anti-tampering check, so this had to change
+        # before any of the k=5 submission-run trials, not after. See the
+        # companion IDENTITY_PREFIX_ALT2 fix in merge-sweep.sh -- without it,
+        # any local accounting of a sweep run under this renamed identity would
+        # silently report "0 of 0 trials", the exact failure class this file's
+        # own TB_AGENT-derived prefix matching has hit twice already
+        # (2026-08-12, 2026-09-01).
+        return "TerranSoul"
 
     @override
     def _classify_exec_error(self, command: str, result):

@@ -71,6 +71,61 @@ if (
 }
 const LOG_PATH = process.env.TB_PROXY_LOG || ''
 
+// ── LIFECYCLE / DEATH LOG (TBENCH-BRAIN-CONNECT-1) ──────────────────────────
+//
+// ⛔ WHY THIS EXISTS. Forensics over the 2026-09 corpus found 22 trials
+// corpus-wide that started with the in-container MCP connection NEVER
+// established at all: Claude Code got ConnectionRefused talking to this
+// proxy and, critically, never retries. LOG_PATH (the tool-call witness log,
+// `record()` below) stayed completely empty for every one of them, because a
+// connection that never happened produces nothing to log there. Nothing else
+// on disk said why -- `check-terransoul-used.sh` read the empty log and
+// printed "The brain may have CONNECTED, but it was never called", which is
+// simply wrong when the container never reached this process at all.
+//
+// This is a SEPARATE file from LOG_PATH on purpose: LOG_PATH's line count
+// feeds witness 1's tool-call tally, and a lifecycle event ("ready", "crash")
+// is not a tool call -- mixing them would inflate or corrupt that count.
+//
+// Two events land here: `ready` once (token loaded AND the socket is bound,
+// i.e. genuinely able to serve a request -- not merely "the process started"),
+// and `crash`/`exit` on every way this process can stop, including the ones
+// that never used to be observable: an uncaught exception, an unhandled
+// rejection, and -- named explicitly in run-dg.sh's own comments as an
+// unhandled case -- the server's `error` event (EADDRINUSE from a stale
+// proxy still holding the port), which previously had no handler at all and
+// crashed the process with no record of why.
+const STATUS_LOG_PATH =
+  process.env.TB_PROXY_STATUS_LOG || (LOG_PATH ? `${LOG_PATH}.status.jsonl` : '')
+let proxyReady = false
+function writeStatus(event, extra = {}) {
+  if (!STATUS_LOG_PATH) return
+  const line = JSON.stringify({
+    event,
+    at: new Date().toISOString(),
+    pid: process.pid,
+    ready: proxyReady,
+    ...extra,
+  })
+  try {
+    fs.appendFileSync(STATUS_LOG_PATH, line + '\n')
+  } catch {
+    // Status logging must never mask, or cause, the real failure.
+  }
+}
+process.on('uncaughtException', err => {
+  const reason = `uncaughtException: ${err?.message ?? err}`
+  writeStatus('crash', { reason })
+  console.error(`[tb-proxy] FATAL ${reason}`)
+  process.exit(1)
+})
+process.on('unhandledRejection', reason => {
+  const msg = `unhandledRejection: ${reason instanceof Error ? reason.message : String(reason)}`
+  writeStatus('crash', { reason: msg })
+  console.error(`[tb-proxy] FATAL ${msg}`)
+  process.exit(1)
+})
+
 // Mirrors src-tauri/src/ai_integrations/mcp/router.rs::is_public_tool_name.
 // Kept as an explicit copy rather than imported: this is a bench-scoped guard,
 // and if the server's list ever changes we want the divergence to be visible
@@ -293,11 +348,13 @@ if (!token) {
   try {
     token = fs.readFileSync(tokenFile, 'utf8').trim()
   } catch (err) {
+    writeStatus('death', { reason: `cannot read MCP token from ${tokenFile}: ${err.message}` })
     console.error(`[tb-proxy] cannot read MCP token from ${tokenFile}: ${err.message}`)
     process.exit(2)
   }
 }
 if (!token) {
+  writeStatus('death', { reason: 'MCP token is empty' })
   console.error('[tb-proxy] MCP token is empty')
   process.exit(2)
 }
@@ -1683,10 +1740,30 @@ const server = http.createServer(async (clientReq, clientRes) => {
   upstream.end()
 })
 
+// ⛔ THIS HANDLER DID NOT EXIST. run-dg.sh's own comments (see the proxy
+// start-up section) document the consequence by hand: "the proxy registers
+// no 'error' handler on its server", so EADDRINUSE (a stale proxy from an
+// earlier trial still holding the port) crashed this process via Node's
+// default uncaught-'error'-event behaviour with nothing on disk saying why —
+// run-dg.sh could only infer it from the child dying instantly. Now it is an
+// ordinary, diagnosable death-log entry.
+server.on('error', err => {
+  writeStatus('crash', { reason: `listen error on 0.0.0.0:${LISTEN_PORT}: ${err.message}`, code: err.code })
+  console.error(`[tb-proxy] FATAL cannot listen on 0.0.0.0:${LISTEN_PORT}: ${err.message}`)
+  process.exit(2)
+})
+
 // 0.0.0.0 on purpose: the container reaches this through host.docker.internal,
 // which is NOT the loopback interface. Bench-scoped and torn down after the
 // run — see run-dg.sh, which starts and stops it around the harbor invocation.
 server.listen(LISTEN_PORT, '0.0.0.0', () => {
+  // READY means both things are true: the token was loaded (checked above,
+  // long before this callback can fire) AND the socket is actually bound, so
+  // a request arriving this instant can be served. This is deliberately a
+  // stronger claim than "the process started" — see the STATUS_LOG_PATH
+  // comment above for why that distinction is the whole point of this file.
+  proxyReady = true
+  writeStatus('ready', { port: LISTEN_PORT, upstream: `${UPSTREAM_HOST}:${UPSTREAM_PORT}` })
   console.log(
     `[tb-proxy] thinking_mode: ${
       VALID_THINKING_MODES.has(THINKING_MODE)
@@ -1696,7 +1773,7 @@ server.listen(LISTEN_PORT, '0.0.0.0', () => {
   )
   console.log(`[tb-proxy] withholding rows tagged '${WITHHELD_TAG}' from ${[...WITHHOLD_TOOLS].join(',')} responses`)
   console.log(
-    `[tb-proxy] listening on 0.0.0.0:${LISTEN_PORT} -> ${UPSTREAM_HOST}:${UPSTREAM_PORT} ` +
+    `[tb-proxy] READY (auth token loaded, listening on 0.0.0.0:${LISTEN_PORT} -> ${UPSTREAM_HOST}:${UPSTREAM_PORT}) ` +
       `(writes ${
         ALLOW_WRITES
           ? 'ALL ALLOWED — run is NOT a clean measurement'
@@ -1803,6 +1880,7 @@ async function shutdown() {
       `(brain accepted ${accepted}, refused ${refused}), ${blockedCount} blocked by this proxy` +
       (DEFER_WRITES ? `, ${t.accepted}/${t.sent} deferred lesson(s) flushed` : ''),
   )
+  writeStatus('exit', { reason: 'signal', allowed, accepted, refused, blocked: blockedCount })
   server.close(() => process.exit(0))
   setTimeout(() => process.exit(0), 3000).unref()
 }

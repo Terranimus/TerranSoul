@@ -158,7 +158,13 @@ async function main() {
   // comes back empty means these ids are not here; stop rather than write 2000
   // successful no-ops.
   const probeId = plan[0].id
-  const probe = await call(url, token, 'brain_observe_outcome', {
+  // OUTCOME-INTEGRITY-3: `brain_credit_outcome` is the harness-only sibling of
+  // `brain_observe_outcome` — off `tools/list`, reachable only by this
+  // HOST-side script's own MCP bearer token, and it always credits as GRADED.
+  // No `verdict_source` argument exists on it (or is needed): reaching it at
+  // all is the provenance proof, which is exactly right here, since these
+  // verdicts are replayed from graded trial artefacts, never self-reported.
+  const probe = await call(url, token, 'brain_credit_outcome', {
     session_id: 'backfill:store-probe',
     context: 'confirming the target store holds these ids before any bulk write',
     action: 'probe',
@@ -183,7 +189,11 @@ async function main() {
         // Counters are monotonic increments, so N observations record N trials.
         // session_id is unique per increment or the tool's repeat-detector
         // treats the run as a stuck loop.
-        await call(url, token, 'brain_observe_outcome', {
+        //
+        // OUTCOME-INTEGRITY-3 — replayed from the trials' own graded results,
+        // via `brain_credit_outcome` (harness-only, always GRADED; no
+        // `verdict_source` to set).
+        await call(url, token, 'brain_credit_outcome', {
           session_id: `backfill:${p.id}:${verdict}:${i}`,
           context: 'historical terminal-bench trial, graded by the task verifier',
           action: 'trial completed and scored',

@@ -437,7 +437,16 @@ export function buildObservation(reward, ids, trialName = 'trial') {
   if (reward === null || !ids.length) return null
   const verdict = verdictFor(reward)
   return {
-    name: 'brain_observe_outcome',
+    // OUTCOME-INTEGRITY-3. This used to be `brain_observe_outcome` with an
+    // explicit `verdict_source: 'grader'` — a plain string argument any caller
+    // could set, including the in-container agent this call is deliberately
+    // NOT reachable by. `brain_credit_outcome` is the harness-only sibling
+    // (off `tools/list`, callable only by this HOST-side script's own MCP
+    // bearer token): reaching it at all IS the provenance proof, so it has no
+    // `verdict_source` argument to set — the tool always credits as GRADED.
+    // `brain_observe_outcome` is untouched and still the tool the in-container
+    // agent calls for its own (uncredited) self-reports.
+    name: 'brain_credit_outcome',
     arguments: {
       // ⛔ session_id / context / action / response ARE REQUIRED, and omitting
       // them cost a run. The first version of this sent only `outcome` and

@@ -27,6 +27,12 @@ cp "$HERE/sweep-status.sh" "$SANDBOX/benchmark/tb/"
 # The quota/killed judge the launcher calls. Absent on the pre-change tree, in
 # which case this cp fails loudly and the launcher runs its old label rule.
 cp "$HERE/rate-limit-evidence.py" "$SANDBOX/benchmark/tb/"
+# The brain-never-connected judge (fix F4/F5) and its own two imports. Absent
+# on the pre-change tree, in which case this cp fails loudly and
+# job_was_brain_never_connected's `node "$helper" ...` errors -- read as
+# "not this shape" by its own fail-safe, so those tests fail the same way the
+# kill tests fail pre-change: never requeued, never announced.
+cp "$HERE/brain-connectivity.mjs" "$HERE/trial-outcome.mjs" "$HERE/trial-evidence.mjs" "$SANDBOX/benchmark/tb/" 2>/dev/null || true
 CALLS="$SANDBOX/calls.txt"
 HOOKS="$SANDBOX/hooks.txt"
 TB="$SANDBOX/benchmark/tb"
@@ -82,6 +88,17 @@ if [ -n "${STUB_KILL_TASK:-}" ] && [ "$TB_TASKS" = "$STUB_KILL_TASK" ] \
     > "$d/${TB_TASKS}__x/agent/claude-code.txt"
 elif [ "${STUB_QUOTA_TASK:-}" = "$TB_TASKS" ]; then
   printf '%s' '{"exception_info":{"exception_type":"ApiRateLimitError","exception_message":"session limit"},"agent_result":{"n_input_tokens":0,"n_output_tokens":0}}' > "$d/${TB_TASKS}__x/result.json"
+elif [ -n "${STUB_NEVER_CONNECTED_TASK:-}" ] && [ "$TB_TASKS" = "$STUB_NEVER_CONNECTED_TASK" ] \
+   && [ "$(( $(cat "$STUB_NEVER_CONNECTED_COUNT" 2>/dev/null || echo 0) + 1 ))" -le "${STUB_NEVER_CONNECTED_TIMES:-1}" ]; then
+  # A real, graded capability-shaped failure (nonzero output tokens, no
+  # exception) whose brain evidence is the EXACT 22-trial shape: the calls
+  # log EXISTS (run-dg.sh always creates it) but holds NOT ONE line, because
+  # the container's Claude Code never reached the proxy at all. Later runs of
+  # the same task fall through to a clean, connected pass -- the requeue
+  # exists to give the trial the chance a working brain connection would have.
+  printf '%s' "$(( $(cat "$STUB_NEVER_CONNECTED_COUNT" 2>/dev/null || echo 0) + 1 ))" > "$STUB_NEVER_CONNECTED_COUNT"
+  printf '%s' '{"exception_info":null,"agent_result":{"n_input_tokens":500,"n_output_tokens":300},"verifier_result":{"rewards":{"reward":0}}}' > "$d/${TB_TASKS}__x/result.json"
+  : > "$d/terransoul-proxy-calls.jsonl"
 else
   printf '%s' '{"exception_info":null,"agent_result":{"n_input_tokens":900,"n_output_tokens":120},"verifier_result":{"rewards":{"reward":1}}}' > "$d/${TB_TASKS}__x/result.json"
 fi
@@ -484,6 +501,26 @@ pf_line=$(grep -n 'Register both prefixes' "$HERE/run-two-workers.sh" | head -1 
 check "reclaim precedes prefix registration" "yes" \
   "$(if [ -n "$rc_line" ] && [ -n "$pf_line" ] && [ "$rc_line" -lt "$pf_line" ]; then echo yes; else echo no; fi)"
 
+echo "== reclaim runs again before EACH task, not only once at launch (fix F3) =="
+# FAILS ON THE PRE-CHANGE TREE: reclaim_port ran exactly once, for both ports,
+# before the task loop -- so a proxy that dies UNCLEANLY mid-sweep (an
+# MSYS-style orphan left holding a worker's own port between one task and the
+# next, e.g. by the EADDRINUSE self-check mcp-auth-proxy.mjs gained in fix F2)
+# was never reclaimed again, and the NEXT task's proxy would collide with it.
+# port_listener_pid resolves through `ss` here (the hermetic shim answers
+# `command -v ss` too), so counting how many times the `ss` shim was asked
+# about :7425 tells the two shapes apart: exactly once pre-fix (launch only),
+# more than once post-fix (launch + once before each of worker0's tasks).
+: > "$CALLS"; : > "$HERMETIC_LOG"
+printf 'alpha bravo charlie delta\n' > "$SANDBOX/four.txt"
+sweep "$SANDBOX/four.txt" >"$SANDBOX/reclaim.log" 2>&1
+w0_tasks="$(grep -c '|7425|' "$CALLS")"
+reclaim_calls_7425="$(grep -cE '^ss .*:7425' "$HERMETIC_LOG")"
+check "worker0 got at least 2 tasks (test setup, not the fix)" "yes" \
+  "$(if [ "${w0_tasks:-0}" -ge 2 ]; then echo yes; else echo no; fi)"
+check "port :7425 was checked for an orphan more than once" "yes" \
+  "$(if [ "${reclaim_calls_7425:-0}" -gt 1 ]; then echo yes; else echo no; fi)"
+
 echo "== a SINGLE task does not silently half-launch =="
 # FAILS ON THE PRE-CHANGE TREE: `declare -a W0 W1` leaves W1 UNSET, so under
 # `set -u` worker 1 aborted with "W1: unbound variable" -- while the script
@@ -795,6 +832,43 @@ check "the inherited lineage is announced" "1" "$(grep -c '^\[2w\] requeue linea
 check "an inherited requeue is honoured: the task runs once" "1" "$(grep -c '|kill-me|' "$CALLS")"
 check "and is announced as AGAIN, not requeued" "1 0" \
   "$(grep -c 'AGENT KILLED AGAIN' "$SANDBOX/kill3.log") $(grep -c '^\[sweep\] REQUEUED' "$SANDBOX/kill3.log")"
+
+echo "== a trial whose brain NEVER CONNECTED is REQUEUED ONCE, not banked as a failure (fix F4) =="
+# FAILS ON THE PRE-CHANGE TREE: job_was_brain_never_connected did not exist,
+# so this graded-zero, non-exception trial fell straight through to the
+# ordinary "ran, graded 0" path -- counted as a capability failure and marked
+# DONE, never requeued, no REQUEUED line, no k=2 disclosure. This is the exact
+# 22-trial corpus shape: a real result.json (nonzero output tokens, no
+# exception) whose terransoul-proxy-calls.jsonl EXISTS but holds nothing.
+NCCOUNT="$SANDBOX/nc-count.txt"
+: > "$CALLS"; : > "$HOOKS"; rm -f "$NCCOUNT"; rm -rf "$TB/jobs"; rm -f "$SANDBOX/mcp-data/logs/"*.log
+printf 'no-brain w1-a w0-b w1-b\n' > "$SANDBOX/nc.txt"
+sweep "$SANDBOX/nc.txt" STUB_NEVER_CONNECTED_TASK=no-brain STUB_NEVER_CONNECTED_TIMES=1 STUB_NEVER_CONNECTED_COUNT="$NCCOUNT" \
+      >"$SANDBOX/nc.log" 2>&1
+check "a never-connected trial does NOT halt the sweep" "0" "$?"
+check "no HALTED line" "0" "$(grep -c 'HALTED' "$SANDBOX/nc.log")"
+check "the never-connected trial is announced once, in the stated form" "1" \
+  "$(grep -c '^\[2w:ts[0-9]*w0\] BRAIN NEVER CONNECTED on no-brain' "$SANDBOX/nc.log")"
+check "worker 0 ran it again at the END of its list" "no-brain w0-b no-brain" \
+  "$(grep '|7425|' "$CALLS" | cut -d'|' -f3 | tr '\n' ' ' | sed 's/ $//')"
+check "worker 1 is untouched" "w1-a w1-b" \
+  "$(grep '|7426|' "$CALLS" | cut -d'|' -f3 | tr '\n' ' ' | sed 's/ $//')"
+NCPK="$(grep -m1 -oE 'ts[0-9]{8}w0' "$SANDBOX/nc.log")"
+check "the requeue ledger records the never-connected reason" "yes" \
+  "$(if grep -q 'never-connected' "$TB/jobs/$NCPK.requeued" 2>/dev/null; then echo yes; else echo no; fi)"
+check "the sweep log carries one machine-readable REQUEUED line" "1" \
+  "$(grep -c '^\[sweep\] REQUEUED worker 0: no-brain ' "$SANDBOX/mcp-data/logs/tbench-par0.log")"
+
+echo "== a SECOND never-connected occurrence of the same task is NOT requeued again =="
+: > "$CALLS"; rm -f "$NCCOUNT"; rm -rf "$TB/jobs"
+sweep "$SANDBOX/nc.txt" STUB_NEVER_CONNECTED_TASK=no-brain STUB_NEVER_CONNECTED_TIMES=2 STUB_NEVER_CONNECTED_COUNT="$NCCOUNT" \
+      >"$SANDBOX/nc2.log" 2>&1
+check "the task ran exactly twice -- one requeue, never a loop" "2" "$(grep -c '|no-brain|' "$CALLS")"
+check "exactly one REQUEUED line" "1" "$(grep -c '^\[sweep\] REQUEUED worker 0: no-brain ' "$SANDBOX/nc2.log")"
+check "the second occurrence is announced as AGAIN" "1" \
+  "$(grep -c 'BRAIN NEVER CONNECTED AGAIN on no-brain' "$SANDBOX/nc2.log")"
+check "the rest of the list still ran" "w0-b w1-a w1-b" \
+  "$(grep -v '|no-brain|' "$CALLS" | cut -d'|' -f3 | sort | tr '\n' ' ' | sed 's/ $//')"
 
 echo "== a halt carries the requeue ledger beside the merged .remaining =="
 # FAILS ON THE PRE-CHANGE TREE: _merge_requeued did not exist, so no

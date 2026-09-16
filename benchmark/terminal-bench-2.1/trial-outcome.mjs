@@ -36,7 +36,7 @@
  * definition it must never contradict.
  */
 import { readFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { join, dirname } from 'node:path'
 import {
   agentProducedWork,
   agentOutput,
@@ -45,6 +45,9 @@ import {
   pytestSignals,
   clipEvidence,
 } from './trial-evidence.mjs'
+import { classifyBrainStatus, BRAIN_STATUS } from './brain-connectivity.mjs'
+
+export { BRAIN_STATUS }
 
 /** Errors that mean the RUN broke, not that the agent was wrong. */
 export const INFRA_ERRORS = new Set([
@@ -517,21 +520,36 @@ export function classifyUnreadable({ why = null, agent, verifier, exceptions = [
 /**
  * The outcome class of one finished trial.
  *
- * @param {string|{result?: object, trialDir?: string, verifierDir?: string}} input
+ * @param {string|{result?: object, trialDir?: string, verifierDir?: string, jobDir?: string}} input
  *   a trial directory, or a parsed result.json plus where its verifier output
  *   and agent evidence live. Reads files under that ONE trial only.
+ *
+ * `brainStatus` (fix F5, TBENCH-BRAIN-CONNECT-1) is attached to every return
+ * shape below: `connected` / `never-connected` / `dropped-mid-trial` / an
+ * `unknown` fallback when no evidence file exists at all. run-dg.sh copies
+ * the proxy's evidence into the JOB directory (one level ABOVE a trial's own
+ * subdirectory in the one-job-one-trial launcher this fix targets), so
+ * `jobDir` defaults to `dirname(trialDir)`; pass it explicitly when that
+ * convention does not hold. This is populated so a future audit reads it
+ * directly instead of reconstructing it by hand from raw proxy logs, which is
+ * exactly what finding the original 22 corpus-wide trials required.
  */
 export function classifyTrial(input) {
   let trialDir = null
   let result
   let verifierDir = null
+  let jobDir = null
   if (typeof input === 'string') {
     trialDir = input.replace(/[/\\]+$/, '')
   } else if (input && typeof input === 'object') {
     trialDir = input.trialDir ?? null
     result = input.result
     verifierDir = input.verifierDir ?? null
+    jobDir = input.jobDir ?? null
   }
+  if (!jobDir && trialDir) jobDir = dirname(trialDir)
+  const brainStatus = classifyBrainStatus({ trialDir: jobDir })
+
   if (result === undefined) {
     let readError = null
     if (trialDir) {
@@ -549,21 +567,22 @@ export function classifyTrial(input) {
           evidence: [clipEvidence('no trial directory and no parsed result')],
           exceptionType: null,
           reward: null,
+          brainStatus,
         }
       }
       // ⛔ NOT A SHORT-CIRCUIT: the rest of the trial still speaks (classifyUnreadable).
-      return classifyUnreadable({
+      return { ...classifyUnreadable({
         why: readError,
         agent: agentOutput(trialDir),
         verifier: readVerifierEvidence(verifierDir ?? join(trialDir, 'verifier')),
         exceptions: exceptionEvidence(trialDir),
-      })
+      }), brainStatus }
     }
   }
   if (!verifierDir && trialDir) verifierDir = join(trialDir, 'verifier')
-  return classifyFacts({
+  return { ...classifyFacts({
     result,
     work: agentProducedWork(trialDir, result),
     verifier: verifierDir ? readVerifierEvidence(verifierDir) : null,
-  })
+  }), brainStatus }
 }

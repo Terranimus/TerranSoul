@@ -1105,6 +1105,13 @@ PROXY_PORT="${TB_PROXY_PORT:-7425}"
 # discriminator — same fix as MCP_CONFIG above, same root assumption.
 PROXY_LOG="$REPO/mcp-data/.tb-proxy-calls-$PROXY_PORT.jsonl"
 : > "$PROXY_LOG"
+# The proxy's lifecycle log (fix F2): ready/crash/exit events, derived by
+# mcp-auth-proxy.mjs itself from TB_PROXY_LOG when TB_PROXY_STATUS_LOG is
+# unset (`<TB_PROXY_LOG>.status.jsonl`). Truncated per-worker-port for the
+# same reason PROXY_LOG is: without this, a stale entry from a PRIOR task on
+# this same port would still be here when fix F5's classifier reads it.
+PROXY_STATUS_LOG="$PROXY_LOG.status.jsonl"
+: > "$PROXY_STATUS_LOG"
 
 TERRANSOUL_MCP_TOKEN="$TERRANSOUL_MCP_TOKEN" \
 TB_PROXY_PORT="$PROXY_PORT" \
@@ -1204,6 +1211,48 @@ proxy_code="$(curl -s -m 5 -o /dev/null -w '%{http_code}' -X POST "http://127.0.
   -d '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}' || true)"
 [ "$proxy_code" = "200" ] || { echo "proxy on :$PROXY_PORT returned $proxy_code — refusing to run" >&2; exit 2; }
 echo "[run-dg] MCP auth proxy up on :$PROXY_PORT (pid $PROXY_PID)"
+
+# ── IN-CONTAINER MCP INITIALIZE PROBE (TBENCH-BRAIN-CONNECT-1 / fix F1) ──────
+#
+# ⛔ THE CHECK ABOVE PROVES NOTHING ABOUT THE PATH THE CONTAINER ACTUALLY
+# USES. It is a `tools/list` sent from THIS HOST to 127.0.0.1 -- and forensics
+# over the 2026-09 corpus found 22 trials corpus-wide where that host-side
+# check would have passed while the container's own Claude Code process got
+# ConnectionRefused talking to this same proxy over `host.docker.internal`,
+# which is NOT the loopback interface, and never retried. Nothing before this
+# tested that second path, or sent the actual `initialize` handshake Claude
+# Code sends first.
+#
+# TWO checks, not one: a throwaway container proves the exact network path
+# (container-mcp-probe.sh, mirrors the "container TLS" preflight's own
+# handshake-not-status-code philosophy), and the Node probe proves the
+# `initialize` method specifically gets a real `protocolVersion` back, with
+# retries this proxy's own listener startup deserves and Claude Code will
+# never give it. TB_SKIP_MCP_INIT_PREFLIGHT=1 escapes both, matching the
+# TB_SKIP_NET_PREFLIGHT convention preflight-sweep.sh already uses.
+if [ "${TB_SKIP_MCP_INIT_PREFLIGHT:-0}" != "1" ]; then
+  init_out="$(node "$HERE/mcp-initialize-probe.mjs" --port "$PROXY_PORT" --retries 6 2>&1)"
+  init_rc=$?
+  if [ "$init_rc" -ne 0 ]; then
+    echo "[run-dg] REFUSING: the host-side MCP initialize handshake never completed on" >&2
+    echo "[run-dg] :$PROXY_PORT ($init_out). A trial started against this would be exactly" >&2
+    echo "[run-dg] the 22-trial shape: a listening port with no working MCP layer behind it." >&2
+    exit 2
+  fi
+  echo "[run-dg] MCP initialize handshake confirmed on :$PROXY_PORT ($init_out)"
+
+  if [ -r "$HERE/container-mcp-probe.sh" ]; then
+    # shellcheck disable=SC1091
+    . "$HERE/container-mcp-probe.sh"
+    if ! probe_container_mcp_initialize "$PROXY_PORT" 6; then
+      echo "[run-dg] REFUSING: host.docker.internal:$PROXY_PORT never completed a real MCP" >&2
+      echo "[run-dg] initialize from inside a container -- the exact path Claude Code uses." >&2
+      echo "[run-dg] A trial started against this would carry TerranSoul's name with no" >&2
+      echo "[run-dg] brain actually reachable, the 22-trial shape this preflight closes." >&2
+      exit 2
+    fi
+  fi
+fi
 
 # The template already points at the proxy port and carries no headers, since
 # harbor would drop them. Copied rather than rendered — nothing secret in it.
@@ -1960,6 +2009,10 @@ MEM_AFTER="$(brain_memory_total)"
 bash "$HERE/check-terransoul-used.sh" "$JOB_DIR" "$PROXY_LOG" "$MEM_BEFORE" "$MEM_AFTER" || true
 
 cp "$PROXY_LOG" "$JOB_DIR/terransoul-proxy-calls.jsonl" 2>/dev/null || true
+# Fix F5: the evidence trial-outcome.mjs's brain-status classifier reads.
+# Copied the same way and for the same reason as the calls log above -- a
+# per-trial, per-worker-port file is not attributable to a trial otherwise.
+cp "$PROXY_STATUS_LOG" "$JOB_DIR/terransoul-proxy-status.jsonl" 2>/dev/null || true
 
 # ── TEACH THE BRAIN WHAT THE GRADER SAID (TBENCH-OUTCOME-LINK-1) ─────────────
 #

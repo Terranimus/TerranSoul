@@ -62,6 +62,40 @@ mk_job zz03 "claude-code__claude-opus-5__tasks" "task-alpha" "1.0"
 
 OUT="$(TB_LAUNCH_REF="$LAUNCH" TB_TASKS_EXPECTED=2 bash "$MERGE" "$JOBS" zz01 zz02 zz03 2>&1)"
 
+# ── THE RENAMED-IDENTITY FORM, 2026-09-16 ──────────────────────────────────
+# TerranSoulHook.name() was renamed "terransoul-hook" -> "TerranSoul" for the
+# leaderboard submission identity. harbor writes that string VERBATIM (zero
+# normalisation) into the real eval key -- neither the colon-stripped TB_AGENT
+# segment ("terransoul_hook") nor its underscore->hyphen form
+# ("terransoul-hook") derives "TerranSoul" by any string transform, so a sweep
+# run under the renamed identity needs its OWN accepted prefix
+# (IDENTITY_PREFIX_ALT2) or it reproduces the identical "0 of 0 trials" failure
+# this whole file exists to catch, just for a third string shape.
+TMP2="$(mktemp -d)"; JOBS2="$TMP2/jobs"; mkdir -p "$JOBS2"
+LAUNCH2="$TMP2/.tb-par0.launch"
+printf 'env TB_JOB_PREFIX=zz11 TB_AGENT=terransoul_hook:TerranSoulHook TB_MODEL=claude-opus-5 bash run-sweep.par.sh\n' > "$LAUNCH2"
+
+mk_job2() { # <prefix> <eval key> <task> <reward>
+  local d="$JOBS2/$1-20260916-000000"
+  mkdir -p "$d/$3__t1/verifier"
+  printf '%s' "$4" > "$d/$3__t1/verifier/reward.txt"
+  cat > "$d/result.json" <<JSON
+{"stats":{"n_completed_trials":1,"n_errored_trials":0,
+"evals":{"$2":{"n_trials":1,"n_errors":0,
+"reward_stats":{"reward":{"$4":["$3__t1"]}}}}}}
+JSON
+}
+mk_job2 zz11 "TerranSoul__claude-opus-5__tasks" "task-gamma" "1.0"
+
+OUT2="$(TB_LAUNCH_REF="$LAUNCH2" TB_TASKS_EXPECTED=1 bash "$MERGE" "$JOBS2" zz11 2>&1)"
+rm -rf "$TMP2"
+
+case "$OUT2" in
+  *"0 of 0 trials"*) no "the renamed TerranSoul identity's trials are NOT excluded" "still reports 0 of 0 — IDENTITY_PREFIX_ALT2 is not matching" ;;
+  *"1 of 1 trials passed"*) ok "the renamed TerranSoul identity's trial is pooled and scored" ;;
+  *) no "the renamed TerranSoul identity's trial is pooled and scored" "$(printf '%s' "$OUT2" | grep -E 'of [0-9]+ trials passed' | head -1)" ;;
+esac
+
 # 1. THE REGRESSION ITSELF. Pre-change this printed "0 of 0 trials".
 case "$OUT" in
   *"0 of 0 trials"*) no "the cohort's own hyphenated trials are NOT excluded" "still reports 0 of 0 — the filter discarded everything" ;;
