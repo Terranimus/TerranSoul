@@ -9,7 +9,9 @@
 
 > **🚧 In active development since 10 April 2026.** Interested? Join us at <https://discord.gg/RzXcvsabKD>
 
-> This is the public **information & GitHub Pages** repository for TerranSoul — what it is, why it exists, and the research + benchmarks behind it.
+> **This repository is the public information site, not the app.** It explains what TerranSoul is, why it exists, and the research + benchmarks behind it; it holds no application code. The working desktop app lives in the private repository **TerranSoulApp**; **TerranSoulMemory** is the lite memory brain for web apps; **Memo** is its cloud twin. A web version is planned, so you can chat with TerranSoul and remote-control it from the browser.
+
+TerranSoul is a personal AI companion with memory that runs on your own machine, a product of the same kind as OpenHuman, the Grok bot and Claude Duet.
 
 TerranSoul keeps your language model **frozen** and makes the **memory around it** smarter — so a small local model behaves above its weight class, every change is auditable, and your knowledge stays **portable data, not opaque weights**. One brain, shared over MCP with your other AI tools.
 
