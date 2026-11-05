@@ -341,6 +341,43 @@ figure.anim-slot figcaption{font-size:.9em;color:var(--ink-soft)}
 <style>
 @media (max-width:780px){
 }
+/* Nov 2026 animations: CSS keyframes on inline SVG only (no script, no SMIL, per the FIGURES rule above).
+   The unanimated SVG is the final frame; reduced motion shows it. content-visibility skips off-screen figures. */
+figure.anim-slot{content-visibility:auto;contain-intrinsic-size:auto 260px}
+.anim-stage{overflow-x:auto;overscroll-behavior-x:contain}
+.anim-stage svg{display:block;width:100%;min-width:480px;height:auto;max-width:640px;margin:0 auto 8px;font-family:var(--mono)}
+.anim-stage text{fill:var(--ink-soft);font-size:12px}
+.anim-stage .a-strong{fill:var(--ink);font-weight:600}
+.anim-stage .a-box{fill:var(--bg);stroke:var(--rule)}
+.anim-stage .a-core{fill:var(--accent-soft);stroke:var(--accent)}
+.anim-stage .a-line{stroke:var(--rule);stroke-width:1.5;fill:none}
+.anim-stage .a-acc{stroke:var(--accent);stroke-width:2.5;fill:none}
+.anim-stage .a-faint{stroke:var(--ink-faint);stroke-width:2;fill:none;stroke-dasharray:4 4}
+.anim-stage .a-bar{fill:var(--ink-faint)}
+.anim-stage .a-bar.hi{fill:var(--accent)}
+.anim-stage .a-dot{fill:var(--accent)}
+.anim-stage .a-mark{fill:var(--ink-faint)}
+.anim-stage .a-mark.hi{fill:var(--accent)}
+@keyframes a-grow{0%{transform:scaleX(0)}30%,100%{transform:scaleX(1)}}
+@keyframes a-draw{0%{stroke-dashoffset:1}40%,100%{stroke-dashoffset:0}}
+@keyframes a-pop{0%{opacity:0;transform:scale(.2)}8%,100%{opacity:1;transform:scale(1)}}
+@keyframes a-flowL{0%{transform:translateX(0);opacity:0}15%{opacity:1}60%,100%{transform:translateX(-150px);opacity:0}}
+@keyframes a-flowR{0%{transform:translateX(0);opacity:0}15%{opacity:1}60%,100%{transform:translateX(150px);opacity:0}}
+@keyframes a-in{0%{transform:translateY(-34px);opacity:0}20%{opacity:1}45%,100%{transform:translateY(0);opacity:0}}
+@keyframes a-pulse{0%,100%{opacity:1}50%{opacity:.55}}
+@media (prefers-reduced-motion:no-preference){
+  .anim-stage .grow{transform-box:fill-box;transform-origin:left center;animation:a-grow 6s ease-out infinite}
+  .anim-stage .grow:nth-of-type(2){animation-delay:.2s}
+  .anim-stage .draw{stroke-dasharray:1;animation:a-draw 7s ease-in-out infinite}
+  .anim-stage .pop{transform-box:fill-box;transform-origin:center;animation:a-pop 8s ease-out infinite backwards;animation-delay:calc(var(--i,0) * .2s)}
+  .anim-stage .flowL{animation:a-flowL 3.2s ease-in-out infinite}
+  .anim-stage .flowR{animation:a-flowR 3.2s ease-in-out infinite;animation-delay:1.6s}
+  .anim-stage .in{animation:a-in 3.2s ease-in infinite}
+  .anim-stage .in2{animation-delay:.5s}
+  .anim-stage .pulse{animation:a-pulse 2.4s ease-in-out infinite}
+}
+/* Moving particles carry no information: hidden in the static frame. */
+@media (prefers-reduced-motion:reduce){.anim-stage .flowL,.anim-stage .flowR,.anim-stage .in{display:none}}
 </style>
 
 <div class="topbar">
@@ -1001,7 +1038,16 @@ figure.anim-slot figcaption{font-size:.9em;color:var(--ink-soft)}
       <tr><td class="note-row"><code>max</code></td><td colspan="6"><em>full-500 arm not run &mdash; owed, tracked, not silently dropped. The n&nbsp;=&nbsp;50 row above is this rung's only measured evidence.</em></td></tr>
     </table></div>
     <figure class="anim-slot" id="fig-rungs-since-august" data-anim="rungs-since-august">
-      <div class="anim-stage" data-anim-stage="rungs-since-august" aria-hidden="true"></div>
+      <div class="anim-stage" data-anim-stage="rungs-since-august" aria-hidden="true"><svg viewBox="0 0 640 150" focusable="false">
+<text x="60" y="18" class="a-strong">NDCG@10, LongMemEval-S (axis 90 to 96)</text>
+<text x="10" y="58">rrf</text><text x="10" y="102">chat</text>
+<rect class="a-bar hi grow" x="60" y="42" width="424.7" height="24" rx="3"/>
+<rect class="a-bar grow" x="60" y="86" width="346.7" height="24" rx="3"/>
+<text x="478.7" y="58" text-anchor="end" style="fill:var(--bg)">94.9 · 08-22</text>
+<text x="400.7" y="102" text-anchor="end" style="fill:var(--bg)">94.0 · 08-30</text>
+<line class="a-acc pulse" x1="502.0" y1="34" x2="502.0" y2="118" stroke-dasharray="4 3"/>
+<text x="502.0" y="136" text-anchor="middle">floor 95.1</text>
+<text x="60" y="136">90</text></svg></div>
       <figcaption><strong>What was measured after 2026-08-11.</strong> <code>rrf</code>, 2026-08-22: R@5 99.4&nbsp;%, NDCG@10 94.9, MRR@20 95.7, 215.71&nbsp;ms. <code>chat</code>, 2026-08-30 (the floor check): R@5 99.2&nbsp;%, R@10 99.8&nbsp;%, R@20 100.0&nbsp;%, NDCG@10 94.0, MRR@20 94.5, 203.17&nbsp;ms. Nothing has been measured since. <code>think</code> and <code>research</code> were last run on 2026-08-11 under the old graph setting; the published arms had no graph edges, so what changed for them is the seed-term carry, not edge expansion. The <code>max</code> arm has never completed: the furthest attempt reached 227 of 500 questions (started 2026-07-27), and a second stopped at 6 (2026-08-01, about 144 s per question). Ranking changes that landed after 2026-08-30 are un-measured: the outcome multiplier (09-14), refuted-row demotion (09-18) and CJK seed indexing (10-30).</figcaption>
     </figure>
 
@@ -1998,7 +2044,25 @@ figure.anim-slot figcaption{font-size:.9em;color:var(--ink-soft)}
     <p><strong>As of 6 November 2026</strong> there are two editions of one brain. <strong>TerranSoul</strong> is the desktop app, with its command line, its MCP server and a gRPC service. <strong>Memo</strong> (<a href="https://memo.terranimus.com">memo.terranimus.com</a>) is the hosted, multi-tenant twin: one brain per company, with a paired test company for every company, sign-in through Terranimus Identity, quotas, approvals and an audit log. Since the owner&rsquo;s rule of 22 October 2026, Memo serves TerranSoul&rsquo;s brain in two modes and keeps both in step with it.</p>
     <p class="small">A word of care: in the main paper &ldquo;memo&rdquo; (lower case) is the retrieve-and-paste side of the &ldquo;memo versus memory&rdquo; debate (Xu, Dai &amp; Zhang). Memo the product has nothing to do with that term.</p>
     <figure class="anim-slot" id="fig-two-editions" data-anim="two-editions">
-      <div class="anim-stage" data-anim-stage="two-editions" aria-hidden="true"></div>
+      <div class="anim-stage" data-anim-stage="two-editions" aria-hidden="true"><svg viewBox="0 0 640 200" focusable="false">
+<text x="275" y="16">vector</text><text x="335" y="16">keyword</text>
+<line class="a-line" x1="295" y1="22" x2="305" y2="70"/><line class="a-line" x1="355" y1="22" x2="335" y2="70"/>
+<circle class="a-dot in" cx="305" cy="66" r="4"/><circle class="a-dot in in2" cx="335" cy="66" r="4"/>
+<rect class="a-core" x="240" y="72" width="160" height="56" rx="8"/>
+<text x="320" y="96" text-anchor="middle" class="a-strong">one retrieval core</text>
+<text x="320" y="114" text-anchor="middle">RRF k = 60 + priors</text>
+<line class="a-line" x1="170" y1="100" x2="240" y2="100"/><line class="a-line" x1="400" y1="100" x2="470" y2="100"/>
+<circle class="a-dot flowL" cx="320" cy="100" r="5"/><circle class="a-dot flowR" cx="320" cy="100" r="5"/>
+<rect class="a-box" x="10" y="62" width="160" height="76" rx="8"/>
+<text x="90" y="88" text-anchor="middle" class="a-strong">TerranSoul</text>
+<text x="90" y="106" text-anchor="middle">desktop · CLI</text><text x="90" y="122" text-anchor="middle">MCP · gRPC</text>
+<rect class="a-box" x="470" y="40" width="160" height="120" rx="8"/>
+<text x="550" y="62" text-anchor="middle" class="a-strong">Memo (hosted)</text>
+<rect class="a-core pulse" x="482" y="72" width="136" height="34" rx="5"/>
+<text x="550" y="93" text-anchor="middle">MCP mode · think</text>
+<rect class="a-box" x="482" y="114" width="136" height="34" rx="5"/>
+<text x="550" y="135" text-anchor="middle">streaming · 5 modes</text>
+<text x="320" y="182" text-anchor="middle">same top-20 / top-8 on 1,982 LoCoMo-10 questions, 22 Oct 2026</text></svg></div>
       <figcaption>One retrieval core, two homes. The desktop edition (left) and Memo (right) share the fusion and ranking code; they differ in where candidates come from, who owns the data, and what is switched on.</figcaption>
     </figure>
     <div class="tablewrap"><table class="editions">
@@ -2023,7 +2087,9 @@ figure.anim-slot figcaption{font-size:.9em;color:var(--ink-soft)}
     <h2 id="story-july-to-november-2026"><span class="scene-num">Since July</span>July to November 2026: the story so far</h2>
     <p>The twelve stages above end in July. This is what happened next, in order, and why each step was taken. The pattern: for four months the work was to measure what had been built and switch off what lost. What won was cheap and bounded: fusion at k&nbsp;=&nbsp;60, half-rank priors, a 0.15 outcome multiplier, quarantine of memories that fail, freshness kept outside the clamp. What lost was the graph channel, the judge rerank, the hard outcome sort and the 3.0-rank priors.</p>
     <figure class="anim-slot" id="fig-timeline-july-nov" data-anim="timeline-july-nov">
-      <div class="anim-stage" data-anim-stage="timeline-july-nov" aria-hidden="true"></div>
+      <div class="anim-stage" data-anim-stage="timeline-july-nov" aria-hidden="true"><svg viewBox="0 0 640 120" focusable="false"><line class="a-line" x1="30" y1="60" x2="610" y2="60"/><line class="a-line" x1="30" y1="48" x2="30" y2="72"/><text x="30" y="92" text-anchor="middle">Jul</text><line class="a-line" x1="172" y1="48" x2="172" y2="72"/><text x="172" y="92" text-anchor="middle">Aug</text><line class="a-line" x1="313" y1="48" x2="313" y2="72"/><text x="313" y="92" text-anchor="middle">Sep</text><line class="a-line" x1="450" y1="48" x2="450" y2="72"/><text x="450" y="92" text-anchor="middle">Oct</text><text x="610" y="92" text-anchor="end">Nov 5</text><circle class="a-mark pop" style="--i:0" cx="39" cy="60" r="5"/><circle class="a-mark pop" style="--i:1" cx="80" cy="60" r="5"/><circle class="a-mark pop" style="--i:2" cx="126" cy="60" r="5"/><circle class="a-mark pop" style="--i:3" cx="135" cy="60" r="5"/><circle class="a-mark pop" style="--i:4" cx="153" cy="60" r="5"/><circle class="a-mark pop" style="--i:5" cx="176" cy="60" r="5"/><circle class="a-mark pop" style="--i:6" cx="190" cy="60" r="5"/><circle class="a-mark pop" style="--i:7" cx="217" cy="60" r="5"/><circle class="a-mark pop" style="--i:8" cx="240" cy="60" r="5"/><circle class="a-mark pop" style="--i:9" cx="249" cy="60" r="5"/><circle class="a-mark pop" style="--i:10" cx="267" cy="60" r="5"/><circle class="a-mark pop" style="--i:11" cx="304" cy="60" r="5"/><circle class="a-mark hi pop" style="--i:12" cx="309" cy="60" r="7"/><circle class="a-mark pop" style="--i:13" cx="313" cy="60" r="5"/><circle class="a-mark pop" style="--i:14" cx="359" cy="60" r="5"/><circle class="a-mark pop" style="--i:15" cx="368" cy="60" r="5"/><circle class="a-mark pop" style="--i:16" cx="373" cy="60" r="5"/><circle class="a-mark pop" style="--i:17" cx="391" cy="60" r="5"/><circle class="a-mark pop" style="--i:18" cx="404" cy="60" r="5"/><circle class="a-mark pop" style="--i:19" cx="505" cy="60" r="5"/><circle class="a-mark hi pop" style="--i:20" cx="546" cy="60" r="7"/><circle class="a-mark pop" style="--i:21" cx="564" cy="60" r="5"/><circle class="a-mark pop" style="--i:22" cx="573" cy="60" r="5"/><circle class="a-mark pop" style="--i:23" cx="578" cy="60" r="5"/><circle class="a-mark pop" style="--i:24" cx="583" cy="60" r="5"/><circle class="a-mark pop" style="--i:25" cx="596" cy="60" r="5"/><circle class="a-mark pop" style="--i:26" cx="605" cy="60" r="5"/><circle class="a-mark pop" style="--i:27" cx="610" cy="60" r="5"/>
+<text x="309" y="30" text-anchor="middle" class="a-strong">08-31 graph vote</text>
+<text x="546" y="30" text-anchor="middle" class="a-strong">10-22 Memo twin</text></svg></div>
       <figcaption>Timeline, July to 5 November 2026. Each marker is one entry below; the graph vote of 31 August is the turning point.</figcaption>
     </figure>
 
@@ -2048,7 +2114,7 @@ figure.anim-slot figcaption{font-size:.9em;color:var(--ink-soft)}
       <li data-date="2026-08-31"><span class="when">2026-08-31</span><span class="what">The graph vote.</span><span class="why">First test with edges present: NDCG@10 0.510 with graph expansion against 0.939 without.</span></li>
     </ol>
     <figure class="anim-slot" id="fig-graph-vote" data-anim="graph-vote">
-      <div class="anim-stage" data-anim-stage="graph-vote" aria-hidden="true"></div>
+      <div class="anim-stage" data-anim-stage="graph-vote" aria-hidden="true"><svg viewBox="0 0 640 175" focusable="false"><text x="150" y="22" class="a-strong">NDCG@10, 200 questions, 31 Aug 2026</text><text x="10" y="56">plain fused</text><rect class="a-bar hi grow" style="animation-delay:0.0s" x="150" y="40" width="413" height="22" rx="3"/><text x="569" y="56" class="a-strong">0.939</text><text x="10" y="88">edges off</text><rect class="a-bar grow" style="animation-delay:0.25s" x="150" y="72" width="400" height="22" rx="3"/><text x="556" y="88" class="a-strong">0.910</text><text x="10" y="120">edges conf ≥ 0.5</text><rect class="a-bar grow" style="animation-delay:0.5s" x="150" y="104" width="318" height="22" rx="3"/><text x="474" y="120" class="a-strong">0.723</text><text x="10" y="152">graph expansion on</text><rect class="a-bar grow" style="animation-delay:0.75s" x="150" y="136" width="224" height="22" rx="3"/><text x="380" y="152" class="a-strong">0.510</text></svg></div>
       <figcaption>The graph vote, 31 August 2026 (LongMemEval-S, 200 questions). NDCG@10: plain fused retrieval 0.939; edges off 0.910; edges with confidence &ge; 0.5 0.723; graph expansion on 0.510.</figcaption>
     </figure>
 
@@ -2090,7 +2156,17 @@ figure.anim-slot figcaption{font-size:.9em;color:var(--ink-soft)}
     <h3 id="story-defects">Defects found while preparing this revision</h3>
     <p>Read from the code on 2026-11-05 and 06; not yet fixed, and marked as inference where no run exists.</p>
     <figure class="anim-slot" id="fig-decay-curve" data-anim="decay-curve">
-      <div class="anim-stage" data-anim-stage="decay-curve" aria-hidden="true"></div>
+      <div class="anim-stage" data-anim-stage="decay-curve" aria-hidden="true"><svg viewBox="0 0 640 175" focusable="false">
+<line class="a-line" x1="40" y1="20" x2="40" y2="140"/><line class="a-line" x1="40" y1="140" x2="330" y2="140"/>
+<text x="34" y="24" text-anchor="end">1.0</text><text x="34" y="144" text-anchor="end">0</text>
+<text x="40" y="158">0</text><text x="180" y="158" text-anchor="middle">14 days</text><text x="320" y="158" text-anchor="middle">28</text>
+<line class="a-faint" x1="40" y1="134" x2="330" y2="134"/>
+<polyline class="a-acc draw" pathLength="1" points="40,20 80,23.5 120,26.8 160,30.1 200,33.3 240,36.3 280,39.3 320,42.2" style="stroke:var(--ink-faint)"/>
+<polyline class="a-acc draw" pathLength="1" points="40,20 80,28.5 120,47.8 160,72.2 200,95.7 240,114.2 280,126.7 320,133.9"/>
+<text x="350" y="46" class="a-strong">documented 0.82 at 28 d</text>
+<text x="350" y="64">0.95^(D/7)</text>
+<text x="350" y="118" class="a-strong" style="fill:var(--accent-ink)">live ≈ 0.05 at 28 d</text>
+<text x="350" y="136">0.95^(D(D+1)/14), inferred</text></svg></div>
       <figcaption>Decay, documented against live. Documented: 0.95 to the power D/7 after D unaccessed days (0.90 at 14 days, 0.82 at 28). Live, because each daily run multiplies by a factor measured from last access: about 0.95 to the power D(D+1)/14 (0.46 at 14 days, 0.05 at 28) [inference from code].</figcaption>
     </figure>
     <ul>
