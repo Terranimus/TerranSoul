@@ -478,6 +478,19 @@
   .ba-nov code{font-family:'JetBrains Mono',ui-monospace,monospace;font-size:12.5px;color:#9fe9f5}
   .ba-nov .ba-note{font-size:13px;color:#8fa6c4;border-left:3px solid #244257;padding-left:12px;margin:12px 0}
   .ba-nov :focus-visible{outline:2px solid #22d3ee;outline-offset:2px}
+  .ba-nov svg.ba-anim{width:100%;max-width:480px;height:auto}
+  .ba-nov .ba-flow{stroke-dasharray:5 5;animation:ba-dash 1.6s linear infinite}
+  .ba-nov .ba-layer{animation:ba-glow 5s ease-in-out infinite;animation-delay:calc(var(--i)*1s)}
+  .ba-nov .ba-dot-v{animation:ba-down 5s linear infinite}
+  .ba-nov .ba-rank{transform-box:fill-box;transform-origin:left;animation:ba-grow 2.8s ease-out infinite;animation-delay:calc(var(--i)*.15s)}
+  .ba-nov .ba-cycle{animation:ba-blink 3s ease-in-out infinite}
+  @keyframes ba-dash{to{stroke-dashoffset:-20}}
+  @keyframes ba-glow{0%,30%,100%{opacity:.55}10%{opacity:1}}
+  @keyframes ba-down{from{transform:translateY(19px)}to{transform:translateY(131px)}}
+  @keyframes ba-grow{0%,40%{transform:scaleX(.1)}70%,100%{transform:scaleX(1)}}
+  @keyframes ba-blink{0%,100%{opacity:1}50%{opacity:.5}}
+  .ba-nov figure.ba-fig:not(.ba-on) *{animation-play-state:paused!important}
+  @media (prefers-reduced-motion:reduce){.ba-nov .ba-anim *{animation:none!important}.ba-nov .ba-anim circle animateMotion{display:none}.ba-nov .ba-pkt,.ba-nov .ba-dot-v{display:none}}
   @media (max-width:640px){.ba-nov{padding:8px 16px 48px}}
 </style>
 <main class="ba-nov" id="current-state">
@@ -511,7 +524,7 @@
         <p>Runs on MariaDB 11.4 with one company per tenant and a paired test company for each. Embeddings are OpenAI <code>text-embedding-3-small</code> (1536 dimensions). Keywords use a weighted score (explicitly not BM25), and vector ranking is exact cosine over at most 1,000 candidates, with no approximate index.</p></div>
     </div>
     <figure class="ba-fig" id="fig-editions" data-anim="editions-map">
-      <div class="ba-fig-stage" role="img" aria-label="Map: TerranSoul desktop, Memo hosted, TerranSoulMemory lite copy, all sharing one brain design">Animation placeholder: editions map (desktop, Memo, lite copy)</div>
+      <div class="ba-fig-stage"><svg class="ba-anim" viewBox="0 0 320 150" role="img" aria-label="Map: TerranSoul desktop, Memo hosted and TerranSoulMemory lite copy all share one brain design; Memo is kept in step with TerranSoul"><title>Map: TerranSoul desktop, Memo hosted and TerranSoulMemory lite copy all share one brain design; Memo is kept in step with TerranSoul</title><g font-family="'JetBrains Mono',monospace" font-size="10"><rect x="120" y="58" width="80" height="34" rx="8" fill="#0c1a27" stroke="#22d3ee"/><text x="160" y="79" text-anchor="middle" fill="#9fe9f5">brain design</text><rect x="8" y="10" width="92" height="30" rx="6" fill="#0a1018" stroke="#27506c"/><text x="54" y="29" text-anchor="middle" fill="#c8d6ea">TerranSoul</text><rect x="220" y="10" width="92" height="30" rx="6" fill="#0a1018" stroke="#27506c"/><text x="266" y="29" text-anchor="middle" fill="#c8d6ea">Memo</text><rect x="114" y="112" width="92" height="30" rx="6" fill="#0a1018" stroke="#27506c"/><text x="160" y="131" text-anchor="middle" fill="#c8d6ea">lite copy</text><path class="ba-flow" d="M100 32 L130 58 M220 32 L190 58 M160 92 L160 112" stroke="#5b8cff" stroke-width="1.4" fill="none"/><path class="ba-flow" d="M100 20 L220 20" stroke="#7dffd0" stroke-width="1.2" fill="none"/><text x="160" y="15" text-anchor="middle" font-size="8" fill="#8fe9c4">kept in step</text></g></svg></div>
       <figcaption>Figure 1. One brain design, three shapes.</figcaption>
     </figure>
     <p class="ba-note">Naming note: the research paper this site links to uses the lowercase word "memo" for retrieve-and-paste memory, in its "memo versus memory" argument. The product Memo here is a different thing.</p>
@@ -527,7 +540,7 @@
       <li><strong>Doors in.</strong> MCP tools, plus gRPC (<code>brain.v1</code> and <code>phone_control.v1</code>). The MCP list shows exactly 12 brain tools: <code>brain_search</code>, <code>brain_get_entry</code>, <code>brain_kg_neighbors</code>, <code>brain_ingest_lesson</code>, <code>brain_ingest_url</code>, <code>brain_append</code>, <code>brain_add_edge</code>, <code>brain_close_edge</code>, <code>brain_delete_memory</code>, <code>brain_observe_outcome</code>, <code>brain_verify_completion</code> and <code>brain_health</code>. About 107 more tools can be called by name.</li>
     </ol>
     <figure class="ba-fig" id="fig-layers" data-anim="layer-stack">
-      <div class="ba-fig-stage" role="img" aria-label="Stack of layers: model core, memory rows, graph, outcome ledger, doors in">Animation placeholder: layer stack</div>
+      <div class="ba-fig-stage"><svg class="ba-anim" viewBox="0 0 320 150" role="img" aria-label="Stack of five layers from the doors in at the top down to the model core: doors in, outcome ledger, graph, memory rows, model core"><title>Stack of five layers from the doors in at the top down to the model core: doors in, outcome ledger, graph, memory rows, model core</title><g font-family="'JetBrains Mono',monospace" font-size="10"><g class="ba-layer" style="--i:0"><rect x="40" y="8" width="240" height="22" rx="5" fill="#0c1a27" stroke="#27506c"/><text x="160" y="23" text-anchor="middle" fill="#c8d6ea">doors in: MCP, gRPC</text></g><g class="ba-layer" style="--i:1"><rect x="40" y="36" width="240" height="22" rx="5" fill="#0c1a27" stroke="#27506c"/><text x="160" y="51" text-anchor="middle" fill="#c8d6ea">outcome ledger</text></g><g class="ba-layer" style="--i:2"><rect x="40" y="64" width="240" height="22" rx="5" fill="#0c1a27" stroke="#27506c"/><text x="160" y="79" text-anchor="middle" fill="#c8d6ea">graph (typed links)</text></g><g class="ba-layer" style="--i:3"><rect x="40" y="92" width="240" height="22" rx="5" fill="#0c1a27" stroke="#27506c"/><text x="160" y="107" text-anchor="middle" fill="#c8d6ea">memory rows</text></g><g class="ba-layer" style="--i:4"><rect x="40" y="120" width="240" height="22" rx="5" fill="#0c1a27" stroke="#27506c"/><text x="160" y="135" text-anchor="middle" fill="#c8d6ea">model core</text></g><circle class="ba-dot-v" cx="20" r="4" fill="#7dffd0"/></g></svg></div>
       <figcaption>Figure 2. The layers, from the model down to the doors.</figcaption>
     </figure>
     <p>The phone contract is gRPC (<code>PhoneControl</code>), not MCP. Native mobile apps are not shipped. What exists is a paired web viewer (added 4 Nov 2026).</p>
@@ -544,7 +557,7 @@
       <li><strong>Eligibility gate (desktop streaming only).</strong> The default desktop chat path uses a separate retriever with a 0.30 cut-off on a weighted score, then keeps the top 8. Without an embedding of the question it is keyword only, and no benchmark measures this path yet.</li>
     </ol>
     <figure class="ba-fig" id="fig-retrieval" data-anim="retrieval-pipeline">
-      <div class="ba-fig-stage" role="img" aria-label="Pipeline: vector, keyword and CJK channels merge with RRF, then small multipliers, then an optional rerank">Animation placeholder: retrieval pipeline</div>
+      <div class="ba-fig-stage"><svg class="ba-anim" viewBox="0 0 320 150" role="img" aria-label="Retrieval pipeline: vector, keyword and CJK channels each rank memories, RRF with k equal to 60 fuses them into one list, small multipliers adjust the order, then an optional rerank"><title>Retrieval pipeline: vector, keyword and CJK channels each rank memories, RRF with k equal to 60 fuses them into one list, small multipliers adjust the order, then an optional rerank</title><g font-family="'JetBrains Mono',monospace" font-size="10"><rect x="6" y="14" width="70" height="24" rx="5" fill="#0c1a27" stroke="#27506c"/><text x="41" y="30" text-anchor="middle" fill="#a8c2ff">vector</text><circle class="ba-pkt" style="--i:0" r="3.5" fill="#7dffd0"><animateMotion dur="2.8s" begin="0.0s" repeatCount="indefinite" path="M76 26 C110 26 110 75 140 75"/></circle><rect x="6" y="56" width="70" height="24" rx="5" fill="#0c1a27" stroke="#27506c"/><text x="41" y="72" text-anchor="middle" fill="#a8c2ff">keyword</text><circle class="ba-pkt" style="--i:1" r="3.5" fill="#7dffd0"><animateMotion dur="2.8s" begin="0.3s" repeatCount="indefinite" path="M76 68 C110 68 110 75 140 75"/></circle><rect x="6" y="98" width="70" height="24" rx="5" fill="#0c1a27" stroke="#27506c"/><text x="41" y="114" text-anchor="middle" fill="#a8c2ff">CJK</text><circle class="ba-pkt" style="--i:2" r="3.5" fill="#7dffd0"><animateMotion dur="2.8s" begin="0.6s" repeatCount="indefinite" path="M76 110 C110 110 110 75 140 75"/></circle><rect x="140" y="60" width="62" height="30" rx="6" fill="#0a1018" stroke="#22d3ee"/><text x="171" y="79" text-anchor="middle" fill="#9fe9f5">RRF 60</text><path class="ba-flow" d="M202 75 L222 75" stroke="#5b8cff" stroke-width="1.4"/><rect class="ba-rank" style="--i:0" x="224" y="40" width="86" height="12" rx="3" fill="#2a6f8c"/><rect class="ba-rank" style="--i:1" x="224" y="58" width="72" height="12" rx="3" fill="#2a6f8c"/><rect class="ba-rank" style="--i:2" x="224" y="76" width="58" height="12" rx="3" fill="#2a6f8c"/><rect class="ba-rank" style="--i:3" x="224" y="94" width="44" height="12" rx="3" fill="#2a6f8c"/><text x="266" y="130" text-anchor="middle" font-size="8" fill="#8fa6c4">× small multipliers</text><text x="266" y="142" text-anchor="middle" font-size="8" fill="#5b7a92">rerank: optional, off</text></g></svg></div>
       <figcaption>Figure 3. From question to ranked memories.</figcaption>
     </figure>
     <h3>Thinking modes</h3>
@@ -578,7 +591,7 @@
         <p>Chat at <code>/v1/chat</code> and <code>/v1/chat/stream</code>, <code>/v1/answer</code>, AG-UI and gRPC <code>PhoneControl</code>. It takes <code>auto</code>, <code>chat</code>, <code>think</code>, <code>research</code> or <code>max</code>, with <code>auto</code> the default. Research and max are built but off and unbenchmarked.</p></div>
     </div>
     <figure class="ba-fig" id="fig-modes" data-anim="memo-modes">
-      <div class="ba-fig-stage" role="img" aria-label="Two doors into Memo: MCP mode pinned to think, streaming mode with auto">Animation placeholder: two modes</div>
+      <div class="ba-fig-stage"><svg class="ba-anim" viewBox="0 0 320 150" role="img" aria-label="Two doors into one Memo brain: MCP mode always ranks like think with no mode argument; streaming mode takes auto, chat, think, research or max"><title>Two doors into one Memo brain: MCP mode always ranks like think with no mode argument; streaming mode takes auto, chat, think, research or max</title><g font-family="'JetBrains Mono',monospace" font-size="10"><rect x="6" y="20" width="110" height="40" rx="6" fill="#0a1018" stroke="#27506c"/><text x="61" y="37" text-anchor="middle" fill="#c8d6ea">MCP mode</text><text x="61" y="51" text-anchor="middle" font-size="8" fill="#8fe9c4">always think</text><rect x="6" y="90" width="110" height="40" rx="6" fill="#0a1018" stroke="#27506c"/><text x="61" y="107" text-anchor="middle" fill="#c8d6ea">streaming</text><text class="ba-cycle" x="61" y="121" text-anchor="middle" font-size="8" fill="#a8c2ff">auto · chat · think</text><rect x="214" y="52" width="98" height="46" rx="10" fill="#0c1a27" stroke="#22d3ee"/><text x="263" y="79" text-anchor="middle" fill="#9fe9f5">Memo brain</text><path class="ba-flow" d="M116 40 C170 40 170 70 214 70 M116 110 C170 110 170 80 214 80" stroke="#5b8cff" stroke-width="1.4" fill="none"/></g></svg></div>
       <figcaption>Figure 4. Same brain, two ways in.</figcaption>
     </figure>
     <p>Memo serves TerranSoul's own protocol files and tool schemas, over gRPC-Web and Connect because the host speaks HTTP/1.1. On 22 Oct 2026, MCP mode returned the same top 20 and streaming mode the same top 8 as TerranSoul on all 1,982 LoCoMo-10 questions. On the 1,536 scored questions, Memo (R@10 68.9, NDCG@10 45.2) beat every Neo4j retriever tested (best R@10 61.8), but answers in about 18–20 ms against Neo4j's 2–4.5 ms. The benchmark used a small English embedder, not Memo's production one.</p>
@@ -815,6 +828,9 @@ class Component extends DCLogic {
   }
 }
 </script>
+<script>(function(){var f=document.querySelectorAll('.ba-nov figure[data-anim]');var rm=matchMedia('(prefers-reduced-motion: reduce)').matches;
+f.forEach(function(e){var v=e.querySelector('svg');function set(on){e.classList.toggle('ba-on',on&&!rm);if(v&&v.pauseAnimations){on&&!rm?v.unpauseAnimations():v.pauseAnimations();}}
+if(!('IntersectionObserver' in window)){set(true);return;}set(false);new IntersectionObserver(function(es){set(es[0].isIntersecting);}).observe(e);});})();</script>
 <script src="../assets/site-nav.js" defer></script>
 </body>
 </html>
