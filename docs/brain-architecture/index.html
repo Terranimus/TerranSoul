@@ -4,8 +4,8 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <script src="./support.js"></script>
-<title>TerranSoul Brain Architecture — giving an LLM a brain</title>
-<meta name="description" content="Interactive map of the TerranSoul brain: an LLM core wrapped in brain-region modules — focus (per-turn effort triage), a typed knowledge graph, six-signal hybrid recall (RRF k=60), three-tier memory, affect, and procedural skills — all reached over one MCP nerve." />
+<title>TerranSoul Brain Architecture — giving an LLM a brain (November 2026)</title>
+<meta name="description" content="Interactive map and current state (November 2026) of the TerranSoul brain and its hosted twin Memo: focus, a typed knowledge graph, hybrid recall merged with RRF (k=60), three-tier memory, affect and skills, with what is shipped and what is planned." />
 <link rel="canonical" href="https://terranimus.github.io/TerranSoul/brain-architecture/" />
 </head>
 <body>
@@ -60,9 +60,10 @@
 
   <header style="display:flex;align-items:flex-end;justify-content:space-between;gap:24px;padding-bottom:13px;border-bottom:1px solid #142033">
     <div>
-      <div style="font-family:'JetBrains Mono',monospace;font-size:10px;letter-spacing:0.28em;text-transform:uppercase;color:#3f6f8c;margin-bottom:9px">TerranSoul // Brain Architecture</div>
+      <div style="font-family:'JetBrains Mono',monospace;font-size:10px;letter-spacing:0.28em;text-transform:uppercase;color:#7fa6bf;margin-bottom:9px">TerranSoul // Brain Architecture · as of November 2026</div>
       <h1 style="margin:0;font-family:'Orbitron',sans-serif;font-weight:700;font-size:29px;letter-spacing:0.01em;line-height:1.05">GIVING AN LLM A <span style="color:#22d3ee;text-shadow:0 0 18px rgba(34,211,238,0.5)">BRAIN</span></h1>
-      <p style="margin:9px 0 0;color:#7d92b3;font-size:13px;max-width:680px;line-height:1.55">The model alone forgets everything between turns. We graft on the regions of a real brain — a frontal lobe to focus, a hippocampus to remember, a cerebellum for skill. Hover a region to see how it works.</p>
+      <p style="margin:9px 0 0;color:#7d92b3;font-size:13px;max-width:680px;line-height:1.55">The model alone forgets everything between turns. We graft on the regions of a real brain — a frontal lobe to focus, a hippocampus to remember, a cerebellum for skill. Hover or tap a region to see how it works (press R to reset). Below the map: the current state as of November 2026, including Memo, the hosted edition.</p>
+      <a href="#current-state" style="display:inline-flex;align-items:center;gap:7px;margin:13px 10px 0 0;font-family:'JetBrains Mono',monospace;font-size:11px;letter-spacing:0.04em;color:#9fe9f5;text-decoration:none;border:1px solid #1f3a52;border-radius:7px;padding:6px 12px;background:rgba(34,211,238,0.06)">Current state, Nov 2026 ↓</a>
       <a href="../brain-advanced-design/" style="display:inline-flex;align-items:center;gap:7px;margin-top:13px;font-family:'JetBrains Mono',monospace;font-size:11px;letter-spacing:0.04em;color:#9fe9f5;text-decoration:none;border:1px solid #1f3a52;border-radius:7px;padding:6px 12px;background:rgba(34,211,238,0.06);transition:border-color .2s,color .2s" style-hover="border-color:#22d3ee;color:#dffaff">
         <svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor" style="opacity:0.85"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
         Read the architecture design doc →
@@ -278,17 +279,17 @@
               <circle cx="120" cy="120" r="16" fill="#0a1018" stroke="#27506c"/><text x="120" y="123" text-anchor="middle" fill="#5b7a92">café</text>
               <circle cx="200" cy="132" r="15" fill="#0a1018" stroke="#27506c"/><text x="200" y="135" text-anchor="middle" fill="#5b7a92">EU</text>
             </g>
-            <circle r="4" fill="#7dffd0"><animateMotion dur="3.4s" repeatCount="indefinite" path="M 82 55 L 160 40 L 250 86"/></circle>
+            <circle r="4" fill="#7dffd0" style="offset-path:path('M 82 55 L 160 40 L 250 86');offset-rotate:0deg;animation:ba-pkt 3.4s linear infinite both"/>
             <text x="160" y="156" text-anchor="middle" font-family="'JetBrains Mono',monospace" font-size="8.5" fill="#8fe9c4">2 hops: you → Lyon → France</text>
           </svg>
         </sc-if>
 
         <sc-if value="{{ isRag }}" hint-placeholder-val="{{ false }}">
-          <svg viewBox="0 0 320 168" style="width:100%;height:auto">
+          <svg viewBox="0 0 320 168" style="width:100%;height:auto" data-anim="rrf-lanes" role="img" aria-label="RRF merges vector, keyword and CJK-only rankings into one list">
             <g font-family="'JetBrains Mono',monospace" font-size="8">
               <text x="44" y="16" text-anchor="middle" fill="#a8c2ff">vector</text>
-              <text x="120" y="16" text-anchor="middle" fill="#a8c2ff">bm25</text>
-              <text x="196" y="16" text-anchor="middle" fill="#a8c2ff">graph</text>
+              <text x="120" y="16" text-anchor="middle" fill="#a8c2ff">keyword</text>
+              <text x="196" y="16" text-anchor="middle" fill="#a8c2ff">CJK*</text>
             </g>
             <g stroke="#27506c" stroke-width="1" fill="#0c1a27">
               <rect x="18" y="24" width="52" height="16" rx="3"/><rect x="18" y="44" width="52" height="16" rx="3"/><rect x="18" y="64" width="52" height="16" rx="3"/>
@@ -303,7 +304,7 @@
             </g>
             <text x="281" y="52" text-anchor="middle" font-family="'JetBrains Mono',monospace" font-size="8" fill="#cfe0ff">fused</text>
             <text x="160" y="138" text-anchor="middle" font-family="'JetBrains Mono',monospace" font-size="9" fill="#a8c2ff">RRF blends 3 rankings → 1 list</text>
-            <text x="160" y="154" text-anchor="middle" font-family="'JetBrains Mono',monospace" font-size="8" fill="#5fb6d6">k=60 = smoothing, so no method dominates</text>
+            <text x="160" y="154" text-anchor="middle" font-family="'JetBrains Mono',monospace" font-size="8" fill="#5fb6d6">k=60 smoothing · *CJK only for CJK queries</text>
           </svg>
         </sc-if>
 
@@ -386,9 +387,13 @@
               <path d="M 86 67.5 C 104 67.5 118 90 128 92"/>
               <path d="M 86 85.5 C 104 85.5 118 92 128 92"/>
               <path d="M 86 103.5 C 104 103.5 116 94 128 93"/>
-              <path d="M 86 137.5 C 104 137.5 116 98 128 95"/>
-              <path d="M 86 155.5 C 106 155.5 116 100 128 96"/>
+              </g>
+            <!-- desktop and phone do not use MCP: Tauri commands and gRPC straight to the brain -->
+            <g stroke="#5b8cff" stroke-width="1.2" fill="none" stroke-dasharray="3 3" opacity="0.8">
+              <path d="M 86 137.5 C 140 137.5 170 128 196 110"/>
+              <path d="M 86 155.5 C 150 155.5 180 140 196 114"/>
             </g>
+            <g font-family="'JetBrains Mono',monospace" font-size="6.5" fill="#8fa6c4"><text x="104" y="134">Tauri</text><text x="104" y="152">gRPC</text></g>
 
             <!-- the one nerve -->
             <rect x="128" y="79" width="38" height="26" rx="7" fill="#06121c" stroke="#7de4ff" stroke-width="1.6"/>
@@ -440,6 +445,240 @@
 
 </div>
 </x-dc>
+<noscript><p style="padding:24px;color:#dbe6f5;font-family:system-ui,sans-serif">The interactive brain map needs JavaScript. The current state of the brain, as of November 2026, is written out below the map.</p></noscript>
+<style>
+  #dc-root,#dc-root>.sc-host{height:auto!important;min-height:100vh}
+  .ba-nov{max-width:1100px;margin:0 auto;padding:8px 38px 64px;color:#dbe6f5;font-family:'Space Grotesk',system-ui,sans-serif;line-height:1.6;font-size:15px}
+  .ba-nov a{color:#9fe9f5}
+  .ba-nov h2{font-family:'Orbitron',system-ui,sans-serif;font-size:20px;letter-spacing:.02em;margin:44px 0 10px;color:#eafcff;scroll-margin-top:16px}
+  .ba-nov h3{font-size:15px;margin:22px 0 6px;color:#bff0ff}
+  .ba-nov p{margin:8px 0;color:#b9c9e0;max-width:78ch}
+  .ba-nov .ba-kicker{font-family:'JetBrains Mono',ui-monospace,monospace;font-size:11px;letter-spacing:.24em;text-transform:uppercase;color:#7fa6bf}
+  .ba-nov .ba-asof{display:inline-block;margin:6px 0 0;padding:3px 10px;border:1px solid #1f3a52;border-radius:999px;font-family:'JetBrains Mono',ui-monospace,monospace;font-size:11px;color:#9fe9f5;background:rgba(34,211,238,.06)}
+  .ba-nov nav.ba-toc{display:flex;flex-wrap:wrap;gap:8px;margin:14px 0 0}
+  .ba-nov nav.ba-toc a{font-size:12px;text-decoration:none;border:1px solid #244257;border-radius:7px;padding:4px 10px;color:#9fc7dd}
+  .ba-nov .ba-summary{margin-top:18px;padding:16px 18px;border:1px solid #1f3a52;border-radius:12px;background:#08111d}
+  .ba-nov .ba-summary ul{margin:6px 0 0;padding-left:20px}
+  .ba-nov .ba-summary li{margin:5px 0;color:#c8d6ea}
+  .ba-nov .ba-def{font-size:13px;color:#7d92b3}
+  .ba-nov table{border-collapse:collapse;width:100%;margin:12px 0;font-size:13.5px}
+  .ba-nov th,.ba-nov td{border:1px solid #17293d;padding:8px 10px;text-align:left;vertical-align:top;color:#c8d6ea}
+  .ba-nov th{background:#0b1626;color:#bff0ff;font-weight:600}
+  .ba-nov .ba-tablewrap{overflow-x:auto}
+  .ba-nov .ba-status{display:inline-block;padding:1px 8px;border-radius:999px;font-size:11.5px;font-family:'JetBrains Mono',ui-monospace,monospace;white-space:nowrap;border:1px solid}
+  .ba-nov .ba-st-shipped{color:#7dffd0;border-color:#1d6b52}
+  .ba-nov .ba-st-off{color:#fbbf24;border-color:#7a5a12}
+  .ba-nov .ba-st-planned{color:#a8c2ff;border-color:#2d4a8a}
+  .ba-nov .ba-st-notrun{color:#f9a8d4;border-color:#8a2d63}
+  .ba-nov figure.ba-fig{margin:16px 0;padding:14px;border:1px dashed #244257;border-radius:12px;background:#07101b}
+  .ba-nov figure.ba-fig figcaption{font-size:12.5px;color:#7d92b3;margin-top:8px}
+  .ba-nov .ba-fig-stage{min-height:120px;display:flex;align-items:center;justify-content:center;color:#7fa6bf;font-family:'JetBrains Mono',ui-monospace,monospace;font-size:12px;text-align:center}
+  .ba-nov ol.ba-steps{padding-left:22px;max-width:80ch}
+  .ba-nov ol.ba-steps li{margin:8px 0;color:#c8d6ea}
+  .ba-nov .ba-two{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:14px;margin:12px 0}
+  .ba-nov .ba-card{padding:14px 16px;border:1px solid #17293d;border-radius:12px;background:#08111d}
+  .ba-nov .ba-card h3{margin-top:0}
+  .ba-nov .ba-card ul{padding-left:18px;margin:6px 0}
+  .ba-nov code{font-family:'JetBrains Mono',ui-monospace,monospace;font-size:12.5px;color:#9fe9f5}
+  .ba-nov .ba-note{font-size:13px;color:#8fa6c4;border-left:3px solid #244257;padding-left:12px;margin:12px 0}
+  .ba-nov :focus-visible{outline:2px solid #22d3ee;outline-offset:2px}
+  .ba-nov svg.ba-anim{width:100%;max-width:480px;height:auto}
+  .ba-nov .ba-flow{stroke-dasharray:5 5;animation:ba-dash 1.6s linear infinite}
+  .ba-nov .ba-layer{animation:ba-glow 5s ease-in-out infinite;animation-delay:calc(var(--i)*1s)}
+  .ba-nov .ba-dot-v{animation:ba-down 5s linear infinite}
+  .ba-nov .ba-rank{transform-box:fill-box;transform-origin:left;animation:ba-grow 2.8s ease-out infinite;animation-delay:calc(var(--i)*.15s)}
+  .ba-nov .ba-cycle{animation:ba-blink 3s ease-in-out infinite}
+  .ba-nov .ba-pkt{offset-rotate:0deg;animation:ba-pkt 2.8s linear infinite both;animation-delay:calc(var(--i)*.3s)}
+  @keyframes ba-pkt{0%{offset-distance:0%;opacity:0}10%{opacity:1}90%{opacity:1}100%{offset-distance:100%;opacity:0}}
+  @keyframes ba-dash{to{stroke-dashoffset:-20}}
+  @keyframes ba-glow{0%,30%,100%{opacity:.55}10%{opacity:1}}
+  @keyframes ba-down{from{transform:translateY(19px)}to{transform:translateY(131px)}}
+  @keyframes ba-grow{0%,40%{transform:scaleX(.1)}70%,100%{transform:scaleX(1)}}
+  @keyframes ba-blink{0%,100%{opacity:1}50%{opacity:.5}}
+  .ba-nov figure.ba-fig:not(.ba-on) *{animation-play-state:paused!important}
+  @media (prefers-reduced-motion:reduce){.ba-nov .ba-anim *{animation:none!important}.ba-nov .ba-pkt,.ba-nov .ba-dot-v{display:none}circle[style*="offset-path"]{animation:none!important;display:none}}
+  @media (max-width:640px){.ba-nov{padding:8px 16px 48px}.ba-nov figure.ba-fig{padding:8px}.ba-nov table.ba-stack thead{position:absolute;left:-9999px}.ba-nov table.ba-stack,.ba-nov table.ba-stack tbody,.ba-nov table.ba-stack tr,.ba-nov table.ba-stack td{display:block;width:100%}.ba-nov table.ba-stack tr{margin:0 0 10px;border:1px solid #17293d;border-radius:8px}.ba-nov table.ba-stack td{border:0;border-bottom:1px solid #17293d}.ba-nov table.ba-stack td::before{content:attr(data-label);display:block;font-size:11px;color:#8fa6c4;font-family:'JetBrains Mono',ui-monospace,monospace}}
+</style>
+<main class="ba-nov" id="current-state">
+  <p class="ba-kicker">TerranSoul and Memo // current state</p>
+  <h2 id="top" style="margin-top:6px">The brain, as built in November 2026</h2>
+  <p class="ba-asof">As of November 2026 · TerranSoulApp <code>73653ff0</code> (5 Nov) · Memo <code>78d1b122</code> (5 Nov) · TerranSoulMemory <code>ec0fb10</code> (12 Oct)</p>
+  <p>The map above shows the idea: a language model wrapped in the regions of a brain. This section says what is actually built today, what is built but switched off, and what is still only planned. Where a number appears, it comes from a dated benchmark run in the repositories.</p>
+  <nav class="ba-toc" aria-label="On this page">
+    <a href="#summary">Summary</a><a href="#editions">Two editions</a><a href="#layers">Layers and data</a><a href="#retrieval">Retrieval</a><a href="#graph-vector">Graph and vector</a><a href="#memo-modes">Memo's two modes</a><a href="#memo-adds">What Memo adds</a><a href="#status">Shipped or planned</a><a href="#limits">Limits</a><a href="#changelog">Changes</a>
+  </nav>
+
+  <section id="summary" class="ba-summary" aria-labelledby="summary-h">
+    <h3 id="summary-h" style="margin-top:0">What is true today</h3>
+    <ul>
+      <li>There are two editions of one brain. <strong>TerranSoul</strong> runs on your own computer. <strong>Memo</strong> is the hosted, multi-tenant version at <a href="https://memo.terranimus.com">memo.terranimus.com</a>, built to give a company's agents the same brain.</li>
+      <li>Search ranks memories by merging several ranked lists with a method called Reciprocal Rank Fusion (RRF, k=60). A plain merge of vector and keyword search is what wins in our measurements.</li>
+      <li>The knowledge graph is <strong>switched off in ranking</strong> by default. Measured with real links present, it made results worse, not better.</li>
+      <li>Memo's results matched TerranSoul's on all 1,982 LoCoMo-10 questions when last compared on 22 Oct 2026. That comparison has not been re-run since TerranSoul moved on.</li>
+      <li>Memory in both editions is stored as text only. On the desktop, scanned images and PDFs are first turned into text (OCR and a vision model); no image, audio or screen is kept as such.</li>
+    </ul>
+    <p class="ba-def">RRF: each search method ranks the memories; a memory near the top of several lists rises to the top of the merged list. k=60 is a smoothing constant so no single method dominates.</p>
+    <p class="ba-def">R@10 (recall) is the share of questions whose right memory is in the top 10 results; NDCG@10 scores how high the right memory sits in the top 10. LoCoMo-10 and LongMemEval-S are public benchmarks of long conversations with questions about them.</p>
+  </section>
+
+  <section id="editions" aria-labelledby="editions-h">
+    <h2 id="editions-h">Two editions of one brain</h2>
+    <p>Since 22 Oct 2026, Memo is TerranSoul's cloud version and is kept in step with it. A third piece, <strong>TerranSoulMemory</strong>, is the lite brain that web apps copy into themselves.</p>
+    <div class="ba-two">
+      <div class="ba-card"><h3>TerranSoul (desktop)</h3>
+        <p>Runs locally with SQLite. Embeddings come from Ollama (<code>embeddinggemma</code>, 768 dimensions) and keyword candidates come from SQLite FTS5 (BM25 only orders that candidate pool). Vector search uses an approximate index (usearch HNSW). The default model provider since 30–31 Oct 2026 is a logged-in local Claude account, otherwise Ollama with a gemma4 model. There are 8 provider backends in all.</p></div>
+      <div class="ba-card"><h3>Memo (hosted)</h3>
+        <p>Runs on MariaDB 11.4 with one company per tenant and a paired test company for each. Embeddings are OpenAI <code>text-embedding-3-small</code> (1536 dimensions). Keyword candidates come from plain text matching (no FTS5), then the same weighted keyword score as desktop (not BM25). Vector ranking is exact cosine over at most 1,000 candidates, with no approximate index.</p></div>
+    </div>
+    <figure class="ba-fig" id="fig-editions" data-anim="editions-map">
+      <div class="ba-fig-stage"><svg class="ba-anim" viewBox="0 0 320 150" role="img" aria-label="Map: TerranSoul desktop, Memo hosted and TerranSoulMemory lite copy all share one brain design; Memo is kept in step with TerranSoul"><title>Map: TerranSoul desktop, Memo hosted and TerranSoulMemory lite copy all share one brain design; Memo is kept in step with TerranSoul</title><g font-family="'JetBrains Mono',monospace" font-size="10"><rect x="120" y="58" width="80" height="34" rx="8" fill="#0c1a27" stroke="#22d3ee"/><text x="160" y="79" text-anchor="middle" fill="#9fe9f5">brain design</text><rect x="8" y="10" width="92" height="30" rx="6" fill="#0a1018" stroke="#27506c"/><text x="54" y="29" text-anchor="middle" fill="#c8d6ea">TerranSoul</text><rect x="220" y="10" width="92" height="30" rx="6" fill="#0a1018" stroke="#27506c"/><text x="266" y="29" text-anchor="middle" fill="#c8d6ea">Memo</text><rect x="114" y="112" width="92" height="30" rx="6" fill="#0a1018" stroke="#27506c"/><text x="160" y="131" text-anchor="middle" fill="#c8d6ea">lite copy</text><path class="ba-flow" d="M100 32 L130 58 M220 32 L190 58 M160 92 L160 112" stroke="#5b8cff" stroke-width="1.4" fill="none"/><path class="ba-flow" d="M100 20 L220 20" stroke="#7dffd0" stroke-width="1.2" fill="none"/><text x="160" y="15" text-anchor="middle" font-size="9" fill="#8fe9c4">kept in step</text></g></svg></div>
+      <figcaption>Figure 1. One brain design, three shapes.</figcaption>
+    </figure>
+    <p class="ba-note">Naming note: the research paper this site links to uses the lowercase word "memo" for retrieve-and-paste memory, in its "memo versus memory" argument. The product Memo here is a different thing.</p>
+  </section>
+
+  <section id="layers" aria-labelledby="layers-h">
+    <h2 id="layers-h">Layers and data model</h2>
+    <ol class="ba-steps">
+      <li><strong>Model core.</strong> Any language model. TerranSoul has 8 backends: free API, paid API, Ollama, LM Studio, llama.cpp, Colibri, vLLM and Claude CLI. A paid API is never chosen by default. Memo uses hosted models (OpenAI by default, with a DeepSeek fallback) and no local model.</li>
+      <li><strong>Memory rows.</strong> Every memory has a tier (short, working, long), a type (fact, preference, context, summary), a cognitive kind (episodic, semantic, procedural, judgment, negative) and a source kind. The desktop schema is at version 71.</li>
+      <li><strong>Graph.</strong> Typed links between memories (such as <code>supersedes</code> and <code>contradicts</code>) with a start and an end date. A link is closed, not deleted. There is one clock (valid from, valid to).</li>
+      <li><strong>Outcome ledger.</strong> Since September 2026 a memory that has been graded carries its outcome (one never graded carries none). A memory that failed twice in a row with no success since is marked refuted and its body is withheld. Outcome nudges ranking only slightly (a 15% multiplier); an open conflict demotes both sides more strongly (x0.7).</li>
+      <li><strong>Doors in.</strong> MCP tools, plus gRPC (<code>brain.v1</code> and <code>phone_control.v1</code>). The MCP list shows exactly 12 brain tools: <code>brain_search</code>, <code>brain_get_entry</code>, <code>brain_kg_neighbors</code>, <code>brain_ingest_lesson</code>, <code>brain_ingest_url</code>, <code>brain_append</code>, <code>brain_add_edge</code>, <code>brain_close_edge</code>, <code>brain_delete_memory</code>, <code>brain_observe_outcome</code>, <code>brain_verify_completion</code> and <code>brain_health</code>. A further 56 <code>brain_*</code> tools exist in the code and can be called by name, but are not listed. The non-brain tools (code, web search, email, channels, observability) stay on the list; the three canvas tools appear only when a canvas host is connected.</li>
+    </ol>
+    <figure class="ba-fig" id="fig-layers" data-anim="layer-stack">
+      <div class="ba-fig-stage"><svg class="ba-anim" viewBox="0 0 320 150" role="img" aria-label="Stack of five layers from the doors in at the top down to the model core: doors in, outcome ledger, graph, memory rows, model core"><title>Stack of five layers from the doors in at the top down to the model core: doors in, outcome ledger, graph, memory rows, model core</title><g font-family="'JetBrains Mono',monospace" font-size="10"><g class="ba-layer" style="--i:0"><rect x="40" y="8" width="240" height="22" rx="5" fill="#0c1a27" stroke="#27506c"/><text x="160" y="23" text-anchor="middle" fill="#c8d6ea">doors in: MCP, gRPC</text></g><g class="ba-layer" style="--i:1"><rect x="40" y="36" width="240" height="22" rx="5" fill="#0c1a27" stroke="#27506c"/><text x="160" y="51" text-anchor="middle" fill="#c8d6ea">outcome ledger</text></g><g class="ba-layer" style="--i:2"><rect x="40" y="64" width="240" height="22" rx="5" fill="#0c1a27" stroke="#27506c"/><text x="160" y="79" text-anchor="middle" fill="#c8d6ea">graph (typed links)</text></g><g class="ba-layer" style="--i:3"><rect x="40" y="92" width="240" height="22" rx="5" fill="#0c1a27" stroke="#27506c"/><text x="160" y="107" text-anchor="middle" fill="#c8d6ea">memory rows</text></g><g class="ba-layer" style="--i:4"><rect x="40" y="120" width="240" height="22" rx="5" fill="#0c1a27" stroke="#27506c"/><text x="160" y="135" text-anchor="middle" fill="#c8d6ea">model core</text></g><circle class="ba-dot-v" cx="20" r="4" fill="#7dffd0"/></g></svg></div>
+      <figcaption>Figure 2. The layers, from the doors in at the top down to the model.</figcaption>
+    </figure>
+    <p>The phone contract is gRPC (<code>PhoneControl</code>), not MCP. Native mobile apps are not shipped. What exists is a paired web client whose remote chat already used gRPC-Web; on 4 Nov 2026 it gained a Watch tab, which lets a paired viewer watch the desktop (off until the owner switches it on).</p>
+  </section>
+
+  <section id="retrieval" aria-labelledby="retrieval-h">
+    <h2 id="retrieval-h">Retrieval pipeline</h2>
+    <p>Desktop chat, the command line and MCP search share one retrieval core. In order:</p>
+    <ol class="ba-steps">
+      <li><strong>Candidate channels.</strong> A dense vector channel, a keyword channel (a term-weighted match score in both editions, not Okapi BM25: a hit in a tag counts most, then a word in the text, then any substring, and rarer words weigh more; desktop uses FTS5/BM25 only to gather its candidates), and a trigram channel (ranked with BM25) used only for Chinese, Japanese and Korean text. A community-summary channel exists but is off by default.</li>
+      <li><strong>Merge with RRF, k=60.</strong> Only these channels vote.</li>
+      <li><strong>Small multipliers after the merge.</strong> Graph and activation together are limited to half a rank. Freshness moves a score by about 3%. Outcome applies the 15% multiplier above. A memory on either side of an open conflict is also scaled by 0.7, outside the half-rank limit. These adjust the order; they are not extra voters.</li>
+      <li><strong>Optional rerank.</strong> An AI-judge rerank exists. It is off for chat and think, and off on the default local path. Measured, it took 4 to 19 seconds against well under a second without it, and could return nothing. Memo has no rerank wired.</li>
+      <li><strong>Eligibility gate (desktop streaming only).</strong> The default desktop chat path uses a separate retriever with a 0.30 cut-off on a weighted score, then keeps the top 8. Without an embedding of the question it is keyword only, and no benchmark measures this path yet.</li>
+    </ol>
+    <figure class="ba-fig" id="fig-retrieval" data-anim="retrieval-pipeline">
+      <div class="ba-fig-stage"><svg class="ba-anim" viewBox="0 0 320 150" role="img" aria-label="Retrieval pipeline: vector, keyword and CJK channels each rank memories, RRF with k equal to 60 fuses them into one list, small multipliers adjust the order, then an optional rerank"><title>Retrieval pipeline: vector, keyword and CJK channels each rank memories, RRF with k equal to 60 fuses them into one list, small multipliers adjust the order, then an optional rerank</title><g font-family="'JetBrains Mono',monospace" font-size="10"><rect x="6" y="14" width="70" height="24" rx="5" fill="#0c1a27" stroke="#27506c"/><text x="41" y="30" text-anchor="middle" fill="#a8c2ff">vector</text><circle class="ba-pkt" style="--i:0;offset-path:path('M76 26 C110 26 110 75 140 75')" r="3.5" fill="#7dffd0"/><rect x="6" y="56" width="70" height="24" rx="5" fill="#0c1a27" stroke="#27506c"/><text x="41" y="72" text-anchor="middle" fill="#a8c2ff">keyword</text><circle class="ba-pkt" style="--i:1;offset-path:path('M76 68 C110 68 110 75 140 75')" r="3.5" fill="#7dffd0"/><rect x="6" y="98" width="70" height="24" rx="5" fill="#0c1a27" stroke="#27506c"/><text x="41" y="114" text-anchor="middle" fill="#a8c2ff">CJK</text><circle class="ba-pkt" style="--i:2;offset-path:path('M76 110 C110 110 110 75 140 75')" r="3.5" fill="#7dffd0"/><rect x="140" y="60" width="62" height="30" rx="6" fill="#0a1018" stroke="#22d3ee"/><text x="171" y="79" text-anchor="middle" fill="#9fe9f5">RRF 60</text><path class="ba-flow" d="M202 75 L222 75" stroke="#5b8cff" stroke-width="1.4"/><rect class="ba-rank" style="--i:0" x="224" y="40" width="86" height="12" rx="3" fill="#2a6f8c"/><rect class="ba-rank" style="--i:1" x="224" y="58" width="72" height="12" rx="3" fill="#2a6f8c"/><rect class="ba-rank" style="--i:2" x="224" y="76" width="58" height="12" rx="3" fill="#2a6f8c"/><rect class="ba-rank" style="--i:3" x="224" y="94" width="44" height="12" rx="3" fill="#2a6f8c"/><text x="266" y="130" text-anchor="middle" font-size="9" fill="#8fa6c4">× small multipliers</text><text x="266" y="142" text-anchor="middle" font-size="9" fill="#8fa6c4">rerank: optional, off</text></g></svg></div>
+      <figcaption>Figure 3. From question to ranked memories.</figcaption>
+    </figure>
+    <h3>Thinking modes</h3>
+    <p>There are six: Auto (default), Chat, Think, Research, Max and SelfRag (desktop only, local Ollama). MCP does not accept Auto. Chat is plain merged recall. Since 1 Sep 2026 Think follows no graph links, so it is almost the same as Chat: in Memo's harness only 8 of 1,982 result lists differ.</p>
+    <p class="ba-note">Latest LongMemEval-S (500 questions, retrieval only): chat, 30 Aug 2026, R@5 99.2, NDCG@10 94.0, 203 ms. Plain RRF, 22 Aug 2026, NDCG@10 94.9. Think, research and max have not been re-measured since the graph change. This measures finding the right memory, not the accuracy of an answer.</p>
+  </section>
+
+  <section id="graph-vector" aria-labelledby="graph-vector-h">
+    <h2 id="graph-vector-h">Graph and vector: what the measurements say</h2>
+    <p>On 31 Aug 2026 the graph was measured for the first time with links actually present (LongMemEval-S, 200 questions, NDCG@10):</p>
+    <div class="ba-tablewrap" tabindex="0" role="region" aria-label="Table, scrolls sideways on narrow screens"><table>
+      <caption class="ba-def" style="text-align:left;caption-side:bottom">Source: TerranSoulApp MULTIHOP-VOTE-1, 2026-08-31.</caption>
+      <thead><tr><th scope="col">Setting</th><th scope="col">NDCG@10</th></tr></thead>
+      <tbody>
+        <tr><td>Plain merge (RRF)</td><td>0.939</td></tr>
+        <tr><td>Graph links on</td><td>0.510</td></tr>
+        <tr><td>Only links with confidence 0.5 or more</td><td>0.723</td></tr>
+        <tr><td>Graph links off</td><td>0.910</td></tr>
+      </tbody></table></div>
+    <p>Link expansion has been off by default since 1 Sep 2026. A cause is in the code: a link's confidence is shared entities divided by the source memory's own entity count, so short memories win the limited link budget. Memo repeated the test on LoCoMo-10 on 22 Oct 2026 using TerranSoul's own code: links alone did not change the lists, link expansion fell from about 69 to 65.6 on R@10, and a PageRank variant lowered NDCG@10 from 45.2 to 39.6.</p>
+    <p>Memo now adds links of its own at write time (5 Nov 2026): from stored-vector similarity and from shared tags, with no model call. These links show on the map and in neighbour queries but are held out of ranking until a benchmark line releases them.</p>
+    <p>On vectors, the desktop index once held 0 vectors against 1,351 embedded rows (found and fixed 16 Aug 2026), so a silent index failure is a known risk. The seeded index tuning settings are not read by production code, and two vector-compression modules (RaBitQ, MUVERA) have no production caller.</p>
+  </section>
+
+  <section id="memo-modes" aria-labelledby="memo-modes-h">
+    <h2 id="memo-modes-h">Memo's two modes</h2>
+    <div class="ba-two">
+      <div class="ba-card"><h3>MCP mode</h3>
+        <p>The <code>brain_*</code> tools at <code>POST /mcp</code>, REST <code>/v1/search</code> and gRPC <code>Brain</code>. It always ranks like TerranSoul's Think and takes no mode argument. Sign-in is OAuth 2.1. Memo is listed in the MCP Registry as <code>com.terranimus/memo</code> (version 0.1.1, 3 Nov 2026).</p></div>
+      <div class="ba-card"><h3>Streaming mode</h3>
+        <p>Chat at <code>/v1/chat</code> and <code>/v1/chat/stream</code>, <code>/v1/answer</code>, AG-UI and gRPC <code>PhoneControl</code>. It takes <code>auto</code>, <code>chat</code>, <code>think</code>, <code>research</code> or <code>max</code>, with <code>auto</code> the default. Research and max are built but off and unbenchmarked.</p></div>
+    </div>
+    <figure class="ba-fig" id="fig-modes" data-anim="memo-modes">
+      <div class="ba-fig-stage"><svg class="ba-anim" viewBox="0 0 320 150" role="img" aria-label="Two doors into one Memo brain: MCP mode always ranks like think with no mode argument; streaming mode takes auto, chat, think, research or max"><title>Two doors into one Memo brain: MCP mode always ranks like think with no mode argument; streaming mode takes auto, chat, think, research or max</title><g font-family="'JetBrains Mono',monospace" font-size="10"><rect x="6" y="20" width="110" height="40" rx="6" fill="#0a1018" stroke="#27506c"/><text x="61" y="37" text-anchor="middle" fill="#c8d6ea">MCP mode</text><text x="61" y="51" text-anchor="middle" font-size="9" fill="#8fe9c4">always think</text><rect x="6" y="90" width="110" height="46" rx="6" fill="#0a1018" stroke="#27506c"/><text x="61" y="105" text-anchor="middle" fill="#c8d6ea">streaming</text><text class="ba-cycle" x="61" y="119" text-anchor="middle" font-size="9" fill="#a8c2ff">auto · chat · think</text><text class="ba-cycle" x="61" y="131" text-anchor="middle" font-size="9" fill="#a8c2ff">research · max</text><rect x="214" y="52" width="98" height="46" rx="10" fill="#0c1a27" stroke="#22d3ee"/><text x="263" y="79" text-anchor="middle" fill="#9fe9f5">Memo brain</text><path class="ba-flow" d="M116 40 C170 40 170 70 214 70 M116 110 C170 110 170 80 214 80" stroke="#5b8cff" stroke-width="1.4" fill="none"/></g></svg></div>
+      <figcaption>Figure 4. Same brain, two ways in.</figcaption>
+    </figure>
+    <p>Memo serves TerranSoul's own protocol files and tool schemas, over gRPC-Web and Connect because the host speaks HTTP/1.1. On 22 Oct 2026, MCP mode returned the same top 20 and streaming mode the same top 8 as TerranSoul on all 1,982 LoCoMo-10 questions. On the 1,536 scored questions, Memo (R@10 69.1, NDCG@10 45.2, the same as TerranSoul's MCP path; the committed scoreboard still shows 68.9 and is stale) beat every Neo4j retriever tested (best R@10 61.8), but answers in about 18–20 ms against Neo4j's 2–4.5 ms. The benchmark used a small English embedder, not Memo's production one.</p>
+    <p class="ba-note">Parity drift: TerranSoul has moved on since 22 Oct (118 commits, and a changed phone protocol file on 4 Nov). The record of minimum scores to hold was copied from earlier runs, not re-measured.</p>
+  </section>
+
+  <section id="memo-adds" aria-labelledby="memo-adds-h">
+    <h2 id="memo-adds-h">What Memo adds, and what it lacks</h2>
+    <div class="ba-two">
+      <div class="ba-card"><h3>Adds</h3>
+        <ul>
+          <li>Tenants, namespaces and a paired test company per company.</li>
+          <li>Approvals, an audit log, spend ceilings, and sign-in through Terranimus Identity.</li>
+          <li>A secret scrub on every write, and a check that refuses near-duplicate writes by meaning.</li>
+          <li>Channels: Messenger, Zalo, Discord and a website widget.</li>
+          <li>Minimum benchmark scores, checked on questions kept out of tuning, so a ranking change must show a measured win first.</li>
+        </ul></div>
+      <div class="ba-card"><h3>Lacks (against TerranSoul)</h3>
+        <ul>
+          <li>No approximate vector index, no FTS5 candidate search, no HyDE, no rerank.</li>
+          <li>No decay, access counting or garbage collection, by design.</li>
+          <li>No code tools and no local models.</li>
+          <li>No LongMemEval number yet.</li>
+        </ul></div>
+    </div>
+  </section>
+
+  <section id="status" aria-labelledby="status-h">
+    <h2 id="status-h">Shipped, built but off, or planned</h2>
+    <p>Items marked Planned are not built. They come from a November 2026 audit and are listed so nobody reads them as features.</p>
+    <div class="ba-tablewrap" tabindex="0" role="region" aria-label="Status table"><table class="ba-stack">
+      <thead><tr><th scope="col">Item</th><th scope="col">Status</th><th scope="col">Note</th></tr></thead>
+      <tbody>
+        <tr><td data-label="Item">Merged vector and keyword retrieval (RRF k=60)</td><td data-label="Status"><span class="ba-status ba-st-shipped">Shipped</span></td><td data-label="Note">Both editions.</td></tr>
+        <tr><td data-label="Item">Graded outcome ledger and refuted-memory quarantine</td><td data-label="Status"><span class="ba-status ba-st-shipped">Shipped</span></td><td data-label="Note">TerranSoul, Sep 2026. Crediting from verified tasks ships off.</td></tr>
+        <tr><td data-label="Item">Archive before every automatic delete</td><td data-label="Status"><span class="ba-status ba-st-shipped">Shipped</span></td><td data-label="Note">TerranSoul, 18 Aug 2026.</td></tr>
+        <tr><td data-label="Item">Memo MCP and streaming modes, gRPC-Web</td><td data-label="Status"><span class="ba-status ba-st-shipped">Shipped</span></td><td data-label="Note">Parity last measured 22 Oct 2026.</td></tr>
+        <tr><td data-label="Item">Graph link expansion in ranking</td><td data-label="Status"><span class="ba-status ba-st-off">Built, off</span></td><td data-label="Note">Measured worse; off since 1 Sep 2026.</td></tr>
+        <tr><td data-label="Item">Memo's automatic cosine and tag links</td><td data-label="Status"><span class="ba-status ba-st-off">Built, held out of ranking</span></td><td data-label="Note">Released only through a benchmark line.</td></tr>
+        <tr><td data-label="Item">Memo research and max orchestrators</td><td data-label="Status"><span class="ba-status ba-st-off">Built, off</span></td><td data-label="Note">Not benchmarked.</td></tr>
+        <tr><td data-label="Item">Memo "Tidy up" (reviewable merge of near-duplicates)</td><td data-label="Status"><span class="ba-status ba-st-off">Built, off</span></td><td data-label="Note">No independent review yet.</td></tr>
+        <tr><td data-label="Item">Memo ranking experiments: neighbour smoothing, a true BM25 keyword channel (neither edition ranks by BM25 today), weighted RRF, a score gate for streaming</td><td data-label="Status"><span class="ba-status ba-st-planned">Planned</span></td><td data-label="Note">Each won on held-out LoCoMo data (questions kept out of tuning); none is switched on. All were measured with the small benchmark embedder, so they need re-measuring with Memo's production one.</td></tr>
+        <tr><td data-label="Item">Re-run parity and refresh the contracts</td><td data-label="Status"><span class="ba-status ba-st-planned">Planned</span></td><td data-label="Note">Protocol copy and tool schemas are behind TerranSoul.</td></tr>
+        <tr><td data-label="Item">Fix decay that compounds against time since last use</td><td data-label="Status"><span class="ba-status ba-st-planned">Planned</span></td><td data-label="Note">Inference from code: memories fade far sooner than documented. Per-kind decay settings are not read.</td></tr>
+        <tr><td data-label="Item">Stop idle replay counting as a graded success</td><td data-label="Status"><span class="ba-status ba-st-planned">Planned</span></td><td data-label="Note">Inference from code, not yet fixed.</td></tr>
+        <tr><td data-label="Item">Benchmark the default desktop retriever</td><td data-label="Status"><span class="ba-status ba-st-planned">Planned</span></td><td data-label="Note">No benchmark covers it today.</td></tr>
+        <tr><td data-label="Item">Write-time supersession in Memo (no model call)</td><td data-label="Status"><span class="ba-status ba-st-planned">Planned</span></td><td data-label="Note">Today a correction that changes only a figure may be refused as a near-duplicate.</td></tr>
+        <tr><td data-label="Item">Memory-poisoning run for both editions</td><td data-label="Status"><span class="ba-status ba-st-planned">Planned</span></td><td data-label="Note">No committed run exists; attacks through a source the brain trusts are not covered.</td></tr>
+        <tr><td data-label="Item">EmbeddingGemma 2 migration with a re-embed sweep</td><td data-label="Status"><span class="ba-status ba-st-planned">Planned</span></td><td data-label="Note">Needs the model confirmed from its primary card first.</td></tr>
+        <tr><td data-label="Item">Answer-accuracy (QA) number with a named judge</td><td data-label="Status"><span class="ba-status ba-st-planned">Planned</span></td><td data-label="Note">Both editions publish retrieval recall only.</td></tr>
+        <tr><td data-label="Item">Vietnamese retrieval set of useful size</td><td data-label="Status"><span class="ba-status ba-st-planned">Planned</span></td><td data-label="Note">One query per language is all that exists on desktop.</td></tr>
+        <tr><td data-label="Item">Consolidation measured on and off</td><td data-label="Status"><span class="ba-status ba-st-planned">Planned</span></td><td data-label="Note">The default job is a replay; the merge job runs only on demand.</td></tr>
+        <tr><td data-label="Item">MemoryAgentBench, MemoryArena, LongMemEval-V2, BEAM</td><td data-label="Status"><span class="ba-status ba-st-notrun">Not run</span></td><td data-label="Note">Neither edition runs these.</td></tr>
+        <tr><td data-label="Item">Remember-to-act reminders in Memo</td><td data-label="Status"><span class="ba-status ba-st-notrun">Not built</span></td><td data-label="Note">Needs durable runs first.</td></tr>
+        <tr><td data-label="Item">Image, audio or screen memory</td><td data-label="Status"><span class="ba-status ba-st-notrun">Not built</span></td><td data-label="Note">Text only; the desktop stores the text read from images and scans (OCR, vision).</td></tr>
+      </tbody></table></div>
+  </section>
+
+  <section id="limits" aria-labelledby="limits-h">
+    <h2 id="limits-h">Limits to know</h2>
+    <ul>
+      <li>Every LongMemEval number measures retrieval with embeddings on. The default desktop chat path can run keyword-only, so those numbers do not describe it.</li>
+      <li>The ranking floor (NDCG@10 95.1) is not regained: current plain-RRF is 94.9 and whether to accept that is still undecided.</li>
+      <li>Scale beyond 1 million rows is untested on desktop. Memo's exact-cosine search is limited to 1,000 candidates per query.</li>
+      <li>On 26–27 Oct 2026 one store lock stalled recall (a short search took 38.5 s on the old build, measured on the morning of 27 Oct). After fixes the same search took 0.5 s once, but that run is confounded (the embedding service had been swapped for an empty one, so a fallback embedder ran). The single lock remains.</li>
+      <li>Vendor accuracy figures from other memory products are self-reported on different setups and are not comparable with our recall numbers.</li>
+    </ul>
+  </section>
+
+  <section id="changelog" aria-labelledby="changelog-h">
+    <h2 id="changelog-h">What changed on this page</h2>
+    <ul>
+      <li><strong>November 2026.</strong> Added this current-state section, Memo, the two Memo modes and the shipped-or-planned list. Corrected the recall description (merged lists, not a cross-encoder), the thinking modes, the client count (7), the mobile path (gRPC, not MCP), the MCP tool list, and the graph and memory notes. Earlier version: 2 Aug 2026.</li>
+      <li><strong>Review fixes, 6 Nov 2026.</strong> Both editions rank keywords with the same weighted score, not BM25; 56 brain tools are callable but unlisted; desktop and phone are no longer shown as MCP clients; Memo numbers updated to the corrected 69.1 / 45.2; the 38.5 s to 0.5 s search caveat is stated; animations are CSS only.</li>
+    </ul>
+    <p>See also the <a href="../LLM-Brain-Design-Research-Paper/memory-evolution.html">memory evolution paper</a> and the <a href="https://memo.terranimus.com">Memo service</a>.</p>
+    <p class="ba-def">This page is maintained in step with <code>TerranSoulApp/docs/brain-architecture</code> (same change, separate pull request). The site is published by hand while GitHub Actions is off, so the live copy can lag the repository.</p>
+  </section>
+</main>
+
 <script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;:{&quot;width&quot;:1480,&quot;height&quot;:760},&quot;showGrid&quot;:{&quot;editor&quot;:&quot;boolean&quot;,&quot;default&quot;:true,&quot;tsType&quot;:&quot;boolean&quot;},&quot;motion&quot;:{&quot;editor&quot;:&quot;boolean&quot;,&quot;default&quot;:true,&quot;tsType&quot;:&quot;boolean&quot;}}">
 class Component extends DCLogic {
   state = { filter: 'all', hoverId: null, pinId: 'grp-all' };
@@ -486,10 +725,10 @@ class Component extends DCLogic {
       part:'Neocortex — like raw cortical activity: pure thought in the moment, with no memory of its own.',
       plain:'The raw language model — any model you choose. Brilliant at reasoning in the moment, but on its own it forgets everything the instant a chat ends.',
       faculties:'attention · motivation · curiosity · insight · creativity',
-      tech:'Model-agnostic: plug in any LLM and run it locally (Ollama) or in the cloud, swapping it whenever you like. Every turn is reasoned here; the surrounding regions give it memory and learning — including the leap of insight (re-framing a stuck problem) and divergent creativity (many varied ideas, then filtered).',tags:['any model','local or cloud','swappable']},
-    'grp-all':{kicker:'WHOLE BRAIN · OVERVIEW',dot:'#22d3ee',title:'The whole brain',part:'1 core · 6 regions · 6 senses.',
-      plain:'An LLM at the core, wrapped in the regions of a real brain that give it memory, recall, focus, feeling and skill — all reachable by any app through one nerve, the MCP brainstem.',
-      members:[{label:'Cortex — thinking surface',color:'#22d3ee'},{label:'Deep — memory & feeling',color:'#a78bfa'},{label:'Senses — apps & feeds',color:'#34d399'}],tags:['1 core','6 regions','6 senses']},
+      tech:'Model-agnostic: 8 backends (free API, paid API, Ollama, LM Studio, llama.cpp, Colibri, vLLM, Claude CLI). Since 30–31 Oct 2026 the default is a logged-in local Claude account, else Ollama with a VRAM-matched gemma4 model; a paid API is never the default. Memo, the hosted edition, runs hosted models only. Every turn is reasoned here; the surrounding regions give it memory and learning — including the leap of insight (re-framing a stuck problem) and divergent creativity (many varied ideas, then filtered).',tags:['8 backends','local or cloud','swappable']},
+    'grp-all':{kicker:'WHOLE BRAIN · OVERVIEW',dot:'#22d3ee',title:'The whole brain',part:'1 core · 6 regions · 7 senses (clients).',
+      plain:'An LLM at the core, wrapped in the regions of a real brain that give it memory, recall, focus, feeling and skill — reachable by agents through one nerve, the MCP brainstem, and by the apps through their own routes (Tauri commands on desktop, gRPC on the phone).',
+      members:[{label:'Cortex — thinking surface',color:'#22d3ee'},{label:'Deep — memory & feeling',color:'#a78bfa'},{label:'Senses — apps & feeds',color:'#34d399'}],tags:['1 core','6 regions','7 clients']},
     'grp-cortex':{kicker:'CORTEX · OUTER THINKING',dot:'#22d3ee',title:'The cortex',part:'The thinking surface of the brain.',
       plain:'Where the brain focuses attention, links facts together, and perceives what matters right now.',
       members:[{label:'Focus — frontal lobe',color:'#818cf8'},{label:'Graph — parietal lobe',color:'#34d399'},{label:'Recall — occipital lobe',color:'#22d3ee'}],tags:['Focus','Graph','Recall']},
@@ -497,28 +736,28 @@ class Component extends DCLogic {
       plain:'The structures that store memories, colour them with emotion, and hold learned skills.',
       members:[{label:'Memory — hippocampus',color:'#a78bfa'},{label:'Affect — amygdala',color:'#f472b6'},{label:'Skills — cerebellum',color:'#fbbf24'}],tags:['Memory','Affect','Skills']},
     'grp-channels':{kicker:'CLIENTS · AGENTS & APPS',dot:'#34d399',title:'The clients',part:'Everything that reaches the brain.',
-      plain:'The agents and apps that send signals into the brain and carry its actions back out — every one through the MCP brainstem.',
-      members:[{label:'Agents — Claude · Codex · OpenClaw · Hermes · peer TS',color:'#34d399'},{label:'Apps — Desktop · Mobile',color:'#22d3ee'},{label:'MCP — brainstem',color:'#7de4ff'}],tags:['agents','apps','MCP']},
+      plain:'The agents and apps that send signals into the brain and carry its actions back out. Agents go through the MCP brainstem; the desktop app calls the same gateway through Tauri commands, and the phone uses gRPC.',
+      members:[{label:'Agents — Claude · Codex · OpenClaw · Hermes · peer TS',color:'#34d399'},{label:'Apps — Desktop (Tauri) · Mobile (gRPC)',color:'#22d3ee'},{label:'MCP — brainstem for agents',color:'#7de4ff'}],tags:['agents','apps','MCP']},
     prefrontal:{kicker:'FRONTAL LOBE · EXECUTIVE',dot:'#818cf8',title:'Focus',
       part:'Frontal lobe — the brain’s executive: it weighs each task and decides how much effort it deserves, and in which gear.',
       plain:'Not every message needs deep thought. Focus sizes each turn and routes it — trivial ones skip the heavy machinery, hard ones get the full pipeline — and it picks the right thinking mode for the turn: a quick grounded chat, careful deliberation, an agentic search, or a verify-everything deep dive.',
       faculties:'metacognition · planning (goal-stack) · reason-budget · cognitive-control · context-compression · narrative-self · automation-blueprints',
-      tech:'Per-turn effort triage (SKIP / LIGHT / NORMAL / FULL) + graded reflection depth, from structural signals only. Each turn it also auto-switches across four thinking modes — chat (knowledge-graph-only fast retrieval) · think (extended single-pass reasoning) · research (agentic multi-step search with citations) · max (retrieve wide, verify each item from its own source, and loop until complete) — so depth and harness scale with the task unless you pin a mode. The executive also supplies cognitive control (inhibiting a prepotent or unsafe answer, watching for conflict between candidate replies, catching its own errors) and proposes recurring routines for you to approve.',tags:['triage','reflection','mode-switch']},
+      tech:'Per-turn effort triage (SKIP / LIGHT / NORMAL / FULL) + graded reflection depth, from structural signals only. There are six thinking modes: auto (default) · chat (plain hybrid recall, no judge, no graph hop) · think (since 1 Sep 2026 almost the same as chat, because graph link expansion is off) · research (multi-step search with citations) · max (retrieve wide, verify each item, loop until complete) · self_rag (desktop only, local Ollama). MCP does not accept auto. Depth scales with the task unless you pin a mode. The executive also supplies cognitive control (inhibiting a prepotent or unsafe answer, watching for conflict between candidate replies, catching its own errors) and proposes recurring routines for you to approve.',tags:['triage','6 modes','reflection']},
     kg:{kicker:'PARIETAL · ASSOCIATION',dot:'#34d399',title:'Knowledge Graph',
       part:'Parietal lobe — association cortex that ties separate facts into one connected picture.',
       plain:'Facts are stored as a web of links, not a flat list. “Multi-hop” means the brain chains links to reach an answer no single memory ever spelled out.',
       faculties:'world-model · theory-of-mind · analogy',
-      tech:'Typed memory-edges, auto-linked on write, with explicit contradicts edges and LLM-arbitrated conflict resolution.',tags:['typed','multi-hop','contradicts']},
+      tech:'Typed, dated memory-edges, closed (never deleted) with brain_close_edge. Link expansion is OFF in ranking since 1 Sep 2026: with links present it scored NDCG@10 0.510 against 0.939 for plain RRF (LongMemEval-S, 200 questions). A novelty filter limits redundant auto-links. TerranSoul opens a conflict the user settles; Memo adds model-free cosine and tag links (5 Nov 2026), held out of ranking. In both editions both sides of an open conflict are demoted.',tags:['typed','off in ranking','contradicts']},
     rag:{kicker:'OCCIPITAL · PERCEPTION',dot:'#22d3ee',title:'Hybrid Recall',
       part:'Occipital lobe — the brain’s perception centre, surfacing the memories worth seeing.',
       plain:'Several different search methods each rank the memories. RRF merges their rankings into one trustworthy list, so no single method can dominate. For research and agent turns there is also an optional deep-research answer-mode that loops — critiquing its own coverage and walking the knowledge graph — to build thoroughly-cited answers; it widens answer coverage, not retrieval, so at production cutoffs it returns the same memories this single pass already surfaces.',
       faculties:'bias-audit · embodied-perception',
-      tech:'Vector + BM25 + graph + freshness + activation, fused by Reciprocal Rank Fusion (k=60), then cross-encoder rerank and a 0.30 cutoff. An optional deep-research answer-mode wraps this for research and agent turns: retrieve → a completeness critic asks what the answer still misses → expand along graph edges → re-query → synthesise a fully-cited answer. It is a coverage/answer mode, not a recall gain — at the production recall depth its candidate set equals the single-shot path.',tags:['RRF k=60','rerank','6-signal','deep-research']},
+      tech:'RRF (k=60) merges the vector channel, the keyword channel (an IDF-weighted term match, not BM25) and, for CJK queries only, a trigram channel (BM25-ranked). Desktop gathers keyword candidates with FTS5; Memo with plain text matching; both then rank them with the same weighted score. Graph × activation (capped at half a rank), freshness (about ±3%) and outcome (15%) are small multipliers after the merge, not voters. The rerank is an AI judge, off for chat and think and off by default; it measured far slower. The 0.30 cutoff belongs only to the desktop streaming retriever, which can run keyword-only. Memo uses the same weighted keyword score, exact cosine over up to 1,000 candidates, and no rerank. An optional deep-research answer-mode wraps this for research and agent turns: retrieve → a completeness critic asks what the answer still misses → expand along graph edges → re-query → synthesise a fully-cited answer. It is a coverage/answer mode, not a recall gain — at the production recall depth its candidate set equals the single-shot path.',tags:['RRF k=60','keyword score','CJK','deep-research']},
     memory:{kicker:'HIPPOCAMPUS · FORMATION',dot:'#a78bfa',title:'Memory',
       part:'Hippocampus — the brain’s memory-maker: it forms new memories and files them for later recall.',
       plain:'Memories flow through three tiers and slowly fade unless used again — much like human forgetting and reinforcement.',
       faculties:'consolidation · prospective-memory · proactive-commitments · memory-governance',
-      tech:'Short → working → long tiers, decay by cognitive kind, safe N→1 consolidation with provenance and reversible rollback. It also holds future intentions — “do Y when X happens / at time T” — and the inferred open-loops a conversation leaves dangling, surfacing the due ones on its own without nagging. A governance gate guards the brain’s own self-written memories against belief drift, poisoned sources, and unbounded growth before they’re allowed to evolve.',tags:['3-tier','decay','rollback','governed','prospective']},
+      tech:'Short → working → long tiers. Decay is by tag category (per-cognitive-kind half-lives exist in code but are not read). Every automatic delete archives first and can be restored. The default idle job replays memories (spaced-repetition style); the N→1 merge runs only on demand. Memo has no decay or garbage collection; its Tidy up (built, off) proposes merges a person publishes. It also holds future intentions — “do Y when X happens / at time T” — and the inferred open-loops a conversation leaves dangling, surfacing the due ones on its own without nagging. A governance gate guards the brain’s own self-written memories against belief drift, poisoned sources, and unbounded growth before they’re allowed to evolve.',tags:['3-tier','archive-first','governed','prospective']},
     amygdala:{kicker:'LIMBIC · AFFECT',dot:'#f472b6',title:'Affect',
       part:'Amygdala — the limbic structure that reads experience and colours it with emotion.',
       plain:'The brain reads the emotional tone of its own reply and shows it on the avatar’s face.',
@@ -531,15 +770,15 @@ class Component extends DCLogic {
       tech:'Procedural ledger with Laplace-smoothed confidence; promote L4→L1, demote, or quarantine after 3 consecutive failures.',tags:['Laplace','promote','quarantine']},
     mcp:{kicker:'BRAINSTEM · PROTOCOL',dot:'#7de4ff',title:'MCP Brain Server',
       part:'Brainstem — the trunk every signal passes through on its way into the brain.',
-      plain:'One protocol any client speaks to reach the brain — coding & self-learning agents (Claude Code, Codex, OpenClaw, Hermes, even another TerranSoul) and apps on desktop or mobile alike, all sharing one memory. The flow runs both ways: the brain also keeps that memory current by pulling from its own sources — RSS/GitHub/IMAP/file connectors, per-repo brains, and peer TerranSoul instances over MCP.',
-      tech:'brain_search / brain_suggest_context / brain_ingest_lesson — all CRUD funnelled through the Rust AppStateGateway, the single source of truth. Beneath the gateway sits one consolidated, sharded SQLite substrate built for ~1M memories: a single canonical schema (no migration ladder) split into tier shards (working / long / logs) with time-partitioned logs, so an always-on resident’s write storm never blocks recall. Inbound: scheduled ConnectorSource ingest (RSS/GitHub/IMAP/LocalFS, AES-256-GCM vault), multi-source repo RAG (memory_sources self + repo), and remote-brain search over MCP (lan_share).',tags:['MCP','gateway','connectors','sharded DB']},
+      plain:'One protocol any client speaks to reach the brain — coding & self-learning agents (Claude Code, Codex, OpenClaw, Hermes, even another TerranSoul) all sharing one memory. The desktop app and the phone reach the same brain by other routes (Tauri commands and gRPC), not over MCP. The flow runs both ways: the brain also keeps that memory current by pulling from its own sources — RSS/GitHub/IMAP/file connectors, per-repo brains, and peer TerranSoul instances over MCP.',
+      tech:'The wire lists exactly 12 brain tools (search, get_entry, kg_neighbors, ingest_lesson, ingest_url, append, add_edge, close_edge, delete_memory, observe_outcome, verify_completion, health); 56 more brain_* tools are callable by name but not listed, and the non-brain tools (code, web search, email, channels, observability) are listed. The same brain is served as gRPC (brain.v1). All CRUD is funnelled through the Rust AppStateGateway. Beneath the gateway sits a consolidated SQLite substrate built for ~1M memories. One store lock still serialises it: on 26–27 Oct 2026 a short search took 38.5 s, and after fixes one confounded measurement gave 0.5 s. Inbound: scheduled ConnectorSource ingest (RSS/GitHub/IMAP/LocalFS/SMTP, AES-256-GCM vault), multi-source repo RAG (memory_sources self + repo), and remote-brain search over MCP (lan_share).',tags:['MCP','gateway','connectors','sharded DB']},
     'ch-claude':{kicker:'AGENT · CODING',dot:'#7de4ff',title:'Claude Code',plain:'A coding & self-learning agent that reads and writes the one shared brain over MCP.',tech:'Same brain over MCP — knowledge it writes is legible to every other client.',tags:['agent','MCP']},
     'ch-codex':{kicker:'AGENT · CODING',dot:'#7de4ff',title:'Codex',plain:'A coding agent on the same brain — its memories outlive any single session.',tech:'brain_search / brain_ingest_lesson over MCP, into the shared AppStateGateway.',tags:['agent','MCP']},
     'ch-openclaw':{kicker:'AGENT · SELF-LEARNING',dot:'#7de4ff',title:'OpenClaw',plain:'A self-learning agent that grows the same memory it reasons over.',tech:'Reads and writes the shared brain over the one MCP nerve.',tags:['agent','MCP']},
     'ch-hermes':{kicker:'AGENT · SELF-LEARNING',dot:'#7de4ff',title:'Hermes',plain:'A self-learning agent sharing one brain with every other client.',tech:'All CRUD funnelled through the Rust AppStateGateway over MCP.',tags:['agent','MCP']},
-    'ch-peer':{kicker:'AGENT · PEER',dot:'#7de4ff',title:'TerranSoul (peer)',plain:'Another TerranSoul instance reaching this brain — minds sharing memory over MCP / LAN.',tech:'Remote-brain search over MCP (lan_share) between peer instances.',tags:['peer','LAN']},
-    'ch-desktop':{kicker:'APP · CLIENT',dot:'#7de4ff',title:'Desktop app',plain:'A VRM companion on Tauri — voice, avatar, and live citation chips, all over the same brain.',tech:'Vue 3 · Tauri · VRM avatar, all over MCP.',tags:['Vue 3','Tauri']},
-    'ch-mobile':{kicker:'APP · CLIENT',dot:'#7de4ff',title:'Mobile app',plain:'The same brain in your pocket — chat and memory carried over the one MCP nerve.',tech:'Mobile client speaking MCP to the shared brain.',tags:['mobile','MCP']},
+    'ch-peer':{kicker:'AGENT · PEER',dot:'#7de4ff',title:'TerranSoul (peer)',plain:'Another TerranSoul instance reaching this brain — minds sharing memory over MCP / LAN.',tech:'Remote-brain search over MCP (lan_share) between peer instances. Memo, the hosted edition at memo.terranimus.com, is the cloud twin and is reached over OAuth 2.1 MCP, REST or gRPC-Web.',tags:['peer','LAN','Memo']},
+    'ch-desktop':{kicker:'APP · CLIENT',dot:'#7de4ff',title:'Desktop app',plain:'A VRM companion on Tauri — voice, avatar, and live citation chips, all over the same brain.',part:'The desktop UI calls the same brain gateway through Tauri commands, not over MCP.',tech:'Vue 3 · Tauri · VRM avatar. Tauri commands into the shared AppStateGateway.',tags:['Vue 3','Tauri']},
+    'ch-mobile':{kicker:'APP · CLIENT',dot:'#7de4ff',title:'Mobile app',part:'Reaches the brain over gRPC (PhoneControl), not MCP.',plain:'The phone path: chat and memory over gRPC (PhoneControl), not MCP. Native mobile apps are not shipped yet; a paired web client exists, and since 4 Nov 2026 it can also watch the desktop.',tech:'terransoul.phone_control.v1.PhoneControl with mTLS pairing; gRPC-Web for the web viewer.',tags:['mobile','gRPC']},
   };
 
   componentDidMount(){
@@ -584,7 +823,7 @@ class Component extends DCLogic {
       onLeave: ()=> this.setState({ hoverId: null }),
       onFilter: (e)=>{ const f=e.currentTarget.getAttribute('data-filter'); this.setState({ filter:f, hoverId:null, pinId:'grp-'+f }); },
       panelKicker: d.kicker, panelTitle: d.title, panelPlain: d.plain,
-      panelPart: d.part || (typeof active==='string' && active.indexOf('ch-')===0 ? 'A client reaching the brain through the MCP brainstem.' : ''),
+      panelPart: d.part || (typeof active==='string' && active.indexOf('ch-')===0 ? 'An agent reaching the brain over MCP.' : ''),
       panelTech: d.tech || '', panelDot: d.dot, panelTags: d.tags||[], groupMembers: d.members||[],
       panelFaculties: d.faculties || '', panelHasFaculties: !!d.faculties,
       isGroup: typeof active==='string' && active.indexOf('grp-')===0,
@@ -598,6 +837,9 @@ class Component extends DCLogic {
   }
 }
 </script>
+<script>(function(){var f=document.querySelectorAll('.ba-nov figure[data-anim]');var rm=matchMedia('(prefers-reduced-motion: reduce)').matches;
+f.forEach(function(e){function set(on){e.classList.toggle('ba-on',on&&!rm);}
+if(!('IntersectionObserver' in window)){set(true);return;}set(false);new IntersectionObserver(function(es){set(es[0].isIntersecting);}).observe(e);});})();</script>
 <script src="../assets/site-nav.js" defer></script>
 </body>
 </html>
