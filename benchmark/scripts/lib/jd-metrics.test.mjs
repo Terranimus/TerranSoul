@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: LicenseRef-Proprietary
 // MILLION-RESUME-BENCH: hand-computed fixtures for the pure metric fns.
 
 import { describe, expect, it } from 'vitest';

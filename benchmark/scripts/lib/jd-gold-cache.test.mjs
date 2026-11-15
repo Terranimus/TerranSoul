@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: LicenseRef-Proprietary
 // MILLION-RESUME-BENCH: gold.json cache-staleness check fixtures.
 
 import { describe, expect, it } from 'vitest';

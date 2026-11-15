@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: LicenseRef-Proprietary
 //
 // JD-DEMO-COMPARISON — Claude Sonnet 5 in-context ceiling harness.
 //

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: LicenseRef-Proprietary
 //
 // MILLION-RESUME-BENCH: JSONL IPC client for the `longmemeval-ipc` shim
 // (same shape as benchmark/scripts/longmemeval-s.mjs JsonlClient).

@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: LicenseRef-Proprietary
 //
 // LongMemEval-S adapter for TerranSoul's MemoryStore. This runner downloads
 // the cleaned LongMemEval-S dataset, streams each question's session haystack

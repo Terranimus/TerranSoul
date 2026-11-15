@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: LicenseRef-Proprietary
 //
 // JD-DEMO scaled runner (2026-07-06). The single entry point behind
 // `/demo jd [1-3] [count]`: run the JD demo/bench at an ARBITRARY résumé

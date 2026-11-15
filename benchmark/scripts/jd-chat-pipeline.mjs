@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: LicenseRef-Proprietary
 //
 // MILLION-RESUME-2 chat-pipeline bench (2026-07-04, user directive: "use the
 // real TerranSoul chat" measurement instead of raw-retrieval-only NDCG).

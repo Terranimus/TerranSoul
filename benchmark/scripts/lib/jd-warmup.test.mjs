@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: LicenseRef-Proprietary
 // MILLION-RESUME-BENCH: warmupThenMeasure proves the cold-sample is excluded
 // from the timed/warm latency series (JD-MILLION-WARMP50-1).
 

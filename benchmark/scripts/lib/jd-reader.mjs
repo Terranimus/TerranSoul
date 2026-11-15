@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: LicenseRef-Proprietary
 //
 // MILLION-RESUME-2 chat-pipeline reader (2026-07-04): pure helpers for the
 // retrieval -> reader -> ranked-shortlist pipeline (jd-chat-pipeline.mjs).

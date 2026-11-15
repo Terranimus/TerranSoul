@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: LicenseRef-Proprietary
 //
 // Pure prompt construction for the optional LongMemEval-S evidence judge
 // (benchmark/scripts/longmemeval-s.mjs --with-judge).

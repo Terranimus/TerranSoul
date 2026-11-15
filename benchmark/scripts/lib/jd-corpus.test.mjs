@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: LicenseRef-Proprietary
 // MILLION-RESUME-BENCH: generator determinism, histogram bands, gold
 // densities, and JD gold-predicate unit tests.
 
