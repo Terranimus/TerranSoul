@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: LicenseRef-Proprietary
 //
 // Token-efficiency calculator for the memory-quality benchmark report.
 // It compares retrieved-memory context tokens against full-context paste and

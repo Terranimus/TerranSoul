@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: LicenseRef-Proprietary
 //
 // MILLION-RESUME-BENCH: pure retrieval-metric functions (no I/O).
 // Used by benchmark/scripts/jd-million-bench.mjs; unit-tested with

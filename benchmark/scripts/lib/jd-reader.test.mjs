@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: LicenseRef-Proprietary
 // Vitest units for the chat-pipeline reader mechanics (jd-reader.mjs).
 
 import { describe, expect, it } from 'vitest';

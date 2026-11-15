@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: LicenseRef-Proprietary
 //
 // MAX-100-23: gold-oracle leak guard for the LongMemEval-S evidence judge.
 //

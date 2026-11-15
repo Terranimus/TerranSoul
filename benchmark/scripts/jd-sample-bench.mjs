@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: LicenseRef-Proprietary
 //
 // MILLION-RESUME-BENCH: 300-resume comparison harness (Phase A follow-on,
 // 2026-07-03). Builds a deterministic, language-stratified 300-resume sample

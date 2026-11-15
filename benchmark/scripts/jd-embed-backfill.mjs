@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: LicenseRef-Proprietary
 //
 // MILLION-RESUME-2 (2026-07-03): resumable dense-channel backfill driver.
 //

@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: LicenseRef-Proprietary
 //
 // MILLION-RESUME JD-DEMO — MAX level ("highest thinking"): AGENTIC WIDE
 // RETRIEVAL + VERIFY-FROM-TEXT, 2026-07-05.

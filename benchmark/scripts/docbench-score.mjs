@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: LicenseRef-Proprietary
 //
 // DOCBENCH-1 scorer — document-corpus retrieval, scored on PAGE-LEVEL gold.
 //

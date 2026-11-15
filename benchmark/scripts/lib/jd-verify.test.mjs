@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: LicenseRef-Proprietary
 // Unit coverage for the MILLION-RESUME MAX verify helpers (jd-verify.mjs).
 import { describe, it, expect } from 'vitest';
 import {

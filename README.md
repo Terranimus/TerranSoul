@@ -78,4 +78,4 @@ TerranSoul's thesis — *memory, not weights* — is defended in a research repo
 
 Interested in becoming a contributor? Join the Discord at <https://discord.gg/RzXcvsabKD> or email Darren directly. Devs, designers, VRM artists, prompt engineers, testers, and non-technical users are all welcome.
 
-Built for the community. MIT License.
+Built for the community. Proprietary. All rights reserved.

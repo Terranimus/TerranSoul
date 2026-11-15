@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: LicenseRef-Proprietary
 //
 // MILLION-RESUME JD-DEMO — consolidate the three thinking levels into one
 // machine-readable comparison (2026-07-05). Reads the per-level result JSONs

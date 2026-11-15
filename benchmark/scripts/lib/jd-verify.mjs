@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: LicenseRef-Proprietary
 //
 // MILLION-RESUME MAX-level verify helpers (2026-07-05). Pure, no I/O — the
 // MAX bench (jd-max-bench.mjs) re-derives the gold predicate FROM EACH
