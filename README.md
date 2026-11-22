@@ -74,7 +74,7 @@ TerranSoul's thesis — *memory, not weights* — is defended in a research repo
 
 ## Contact
 
-**Darren Bui** — [darren.bui@terransoul.com](mailto:darren.bui@terransoul.com)
+**Darren Bui** — [darren.bui@terranimus.com](mailto:darren.bui@terranimus.com)
 
 Interested in becoming a contributor? Join the Discord at <https://discord.gg/RzXcvsabKD> or email Darren directly. Devs, designers, VRM artists, prompt engineers, testers, and non-technical users are all welcome.
 
