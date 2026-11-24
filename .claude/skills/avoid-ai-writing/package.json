@@ -1,0 +1,5 @@
+{
+  "private": true,
+  "type": "commonjs",
+  "description": "Marks the vendored avoid-ai-writing scripts as CommonJS so they run inside repos whose package.json sets \"type\": \"module\"."
+}
