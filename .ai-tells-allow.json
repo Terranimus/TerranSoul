@@ -1,0 +1,9 @@
+{
+  "allow": [
+    {
+      "path": "docs/i18n/_missing-keys.json",
+      "phrase": "em-dash chain",
+      "reason": "Translator work list that mirrors the English page source text verbatim; it is matched against the HTML, not shown to readers."
+    }
+  ]
+}
