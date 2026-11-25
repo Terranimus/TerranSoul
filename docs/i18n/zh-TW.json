@@ -217,7 +217,7 @@
   "REASONING": "推理",
   "Chain of thought · Tool calls · Final answer": "思維鏈 · 工具呼叫 · 最終答案",
   "the model's own work — elicit, never simulate": "模型自己的工作——引導，絕不模擬",
-  "the model’s own work — elicit, never simulate": "模型自身的工作 — 引導，從不模擬",
+  "the model’s own work — elicit, never simulate": "模型自身的工作：引導，從不模擬",
   "LLM, RAG & Memory": "LLM、RAG 與記憶",
   "Why the model decides, not the code": "為什麼由模型決策，而非程式碼",
   "Fundamentals · 18 min read": "基礎知識 · 閱讀約18分鐘",
